@@ -82,6 +82,24 @@ The taxonomy migration is explicit and does not run during application startup. 
 
 Read-only discovery endpoints are `GET /api/categories`, `GET /api/categories/{slug}/topics`, and `GET /api/tags?limit=100&offset=0`. The category endpoint returns active roots as a nested tree and omits inactive nodes and their branches. The topics endpoint returns all active descendants in depth-first order, each with its direct `parent_id`. Tags are active-only and paginated with a maximum page size of 100 and offset of 10,000. Category and tag records expose stable IDs/slugs, display names, and localization keys. These endpoints do not return quiz records or answer data. No player preference or question-selection behavior is attached to the taxonomy.
 
+### Question formats and exam collections (Stage 7.0C)
+
+Apply the additive migration explicitly, then seed taxonomy before exam collections:
+
+```powershell
+& .\.venv\Scripts\alembic.exe upgrade head
+& .\.venv\Scripts\python.exe -m quizverse.persistence.taxonomy_seeding
+& .\.venv\Scripts\python.exe -m quizverse.persistence.exam_seeding
+```
+
+The equivalent installed commands are `alembic upgrade head`, `quizverse-seed-taxonomy`, and `quizverse-seed-exam-collections`. Both seed steps are explicit and idempotent. Exam seeding uses existing active taxonomy categories, adds only missing collections and mappings, and preserves edited display metadata. It supplies no official syllabus version, region, endorsement, or source claim.
+
+Legacy questions retain their four option columns, answer index, free-text category, and existing behavior; the new `question_format` defaults to `multiple_choice`. Open-ended, puzzle, and sequence records store bounded, validated structured payloads. They remain author-only drafts because existing live modes accept MCQ questions only. Learning-level labels describe content suitability, not verified player ages; unreviewed content is not suitable for Little Explorers by default. Source publication, verification, and review-due dates support freshness review without asserting that content is current.
+
+The migration adds nullable metadata and format payload columns and changes the existing MCQ columns to nullable so the database can represent future formats; a check constraint enforces the correct field shape. Existing values are copied unchanged, and legacy questions receive MCQ/English/unreviewed defaults with no taxonomy assignment added by this migration. SQLite uses Alembic batch table reconstruction to preserve rows while applying the checks and nullability changes. PostgreSQL uses Alembic's native `ALTER TABLE` operations for the same additions and constraints; PostgreSQL execution has not been verified in this workspace. Downgrade refuses to proceed while any non-MCQ question exists, and otherwise removes the new tables/columns.
+
+Read-only collection discovery is available at `GET /api/exam-collections` and `GET /api/exam-collections/{slug}`. It returns active collection metadata and ordered active taxonomy mappings only; it does not expose quizzes or answers.
+
 Inspect the applied revision with `alembic current`; create a future migration with `alembic revision --autogenerate -m "describe schema change"` and review its generated operations before applying it. `alembic downgrade -1` reverts one revision and can remove persisted data, so back up the database first. Migrations are never run automatically by the app.
 
 For a PostgreSQL database, configure a driver URL such as `postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE` in the server environment and install `pip install -e '.[postgres]'`. Do not place real credentials in `.env.example` or source control. Alembic must be run explicitly against the configured database before using persistence features. The current game process does not connect active rooms to PostgreSQL.

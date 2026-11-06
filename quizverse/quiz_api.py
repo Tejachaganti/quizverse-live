@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import math
 import threading
 import time
 from collections import deque
-from typing import Annotated, Literal
+from datetime import date
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, FastAPI, Header, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.exc import SQLAlchemyError
 from quizverse.ai_generation import (
     GenerationError,
@@ -32,8 +34,18 @@ from quizverse.persistence.authorization import (
 )
 from quizverse.persistence.capabilities import CapabilityScope
 from quizverse.persistence.repositories import QuestionRecord, QuizRecord, QuizVersionConflict
+from quizverse.question_content import LearningLevel, QuestionFormat, validate_format_payload, validate_question_metadata
 
 _CATEGORY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,49}$")
+_MAX_QUESTION_CONTENT_BYTES = 256 * 1024
+
+
+def _bounded_question_content(questions: list[QuestionInput] | None) -> None:
+    if questions is None:
+        return
+    encoded = json.dumps([question.model_dump(mode="json") for question in questions], separators=(",", ":")).encode("utf-8")
+    if len(encoded) > _MAX_QUESTION_CONTENT_BYTES:
+        raise ValueError("Question content must fit within 256 KB per quiz update.")
 
 
 class ApiProblem(Exception):
@@ -105,22 +117,68 @@ class StrictRequest(BaseModel):
 
 class QuestionInput(StrictRequest):
     prompt: str = Field(min_length=1, max_length=500)
-    options: list[str] = Field(min_length=4, max_length=4)
-    correct_option_index: int = Field(ge=0, le=3)
+    options: list[str] | None = Field(default=None, min_length=4, max_length=4)
+    correct_option_index: int | None = Field(default=None, ge=0, le=3)
     explanation: str | None = Field(default=None, max_length=1000)
     category: str | None = Field(default=None, min_length=1, max_length=50)
+    category_id: str | None = Field(default=None, min_length=1, max_length=128)
+    tags: list[str] = Field(default_factory=list, max_length=20)
     difficulty: Literal["easy", "medium", "hard"] | None = None
     time_limit_seconds: int | None = Field(default=None, ge=5, le=120)
+    format: QuestionFormat = "multiple_choice"
+    format_payload: dict[str, Any] | None = None
+    language: str = Field(default="en", min_length=2, max_length=35)
+    learning_levels: list[LearningLevel] = Field(default_factory=list, max_length=6)
+    source_name: str | None = Field(default=None, max_length=200)
+    source_url: str | None = Field(default=None, max_length=1000)
+    source_published_at: date | None = None
+    verified_at: date | None = None
+    review_due_at: date | None = None
+
+    @field_validator("language")
+    @classmethod
+    def normalize_language(cls, value: str) -> str:
+        return value.lower()
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "QuestionInput":
+        try:
+            validate_format_payload(self.format, self.format_payload)
+            validate_question_metadata(
+                language=self.language,
+                learning_levels=self.learning_levels,
+                source_name=self.source_name,
+                source_url=self.source_url,
+                source_published_at=self.source_published_at,
+                verified_at=self.verified_at,
+                review_due_at=self.review_due_at,
+                tags=self.tags,
+                category_id=self.category_id,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(str(error)) from error
+        return self
 
     def to_record(self) -> QuestionRecord:
         return QuestionRecord(
             prompt=self.prompt,
-            options=tuple(self.options),  # repository validation checks the normalized choices
+            options=tuple(self.options) if self.options is not None else None,
             correct_option_index=self.correct_option_index,
             explanation=self.explanation,
             category=self.category,
+            category_id=self.category_id,
+            tags=tuple(self.tags),
             difficulty=self.difficulty,
             time_limit_seconds=self.time_limit_seconds,
+            question_format=self.format,
+            format_payload=self.format_payload,
+            language=self.language,
+            learning_levels=tuple(self.learning_levels),
+            source_name=self.source_name,
+            source_url=self.source_url,
+            source_published_at=self.source_published_at,
+            verified_at=self.verified_at,
+            review_due_at=self.review_due_at,
         )
 
 
@@ -133,6 +191,11 @@ class QuizCreateInput(StrictRequest):
     default_time_limit_seconds: int = Field(default=15, ge=5, le=120)
     questions: list[QuestionInput] = Field(default_factory=list, max_length=200)
     generation_ticket: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_question_content_size(self) -> "QuizCreateInput":
+        _bounded_question_content(self.questions)
+        return self
 
     @model_validator(mode="after")
     def validate_category(self) -> "QuizCreateInput":
@@ -173,6 +236,8 @@ class QuizUpdateInput(StrictRequest):
                 raise ValueError(f"{field_name} cannot be null.")
         if "questions" in fields and self.questions is None:
             raise ValueError("questions must be a list when provided.")
+        if "questions" in fields:
+            _bounded_question_content(self.questions)
         if self.category is not None and not _CATEGORY_PATTERN.fullmatch(
             self.category.strip().lower().replace(" ", "-")
         ):
@@ -227,10 +292,29 @@ class PlayerQuizResponse(BaseModel):
     questions: tuple[PlayerQuestionResponse, ...]
 
 
-class AuthorQuestionResponse(PlayerQuestionResponse):
-    correct_option_index: int
+class AuthorQuestionResponse(BaseModel):
+    id: str
+    position: int
+    prompt: str
+    options: tuple[str, str, str, str] | None
+    correct_option_index: int | None
     explanation: str | None
+    format: QuestionFormat
+    format_payload: dict[str, Any] | None
     provenance: str
+    category: str | None
+    category_id: str | None
+    difficulty: str | None
+    time_limit_seconds: int | None
+    tags: tuple[str, ...]
+    language: str
+    learning_levels: tuple[str, ...]
+    review_status: str
+    source_name: str | None
+    source_url: str | None
+    source_published_at: date | None
+    verified_at: date | None
+    review_due_at: date | None
 
 
 class AuthorQuizResponse(BaseModel):

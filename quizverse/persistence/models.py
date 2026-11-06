@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
+    JSON,
     Integer,
     String,
     Text,
@@ -101,6 +103,61 @@ class QuestionTag(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class ExamCollection(Base):
+    """Curated collection metadata; syllabus and source fields remain optional."""
+
+    __tablename__ = "exam_collections"
+    __table_args__ = (
+        CheckConstraint("length(slug) BETWEEN 1 AND 80", name="ck_exam_collection_slug_length"),
+        CheckConstraint("length(display_name) BETWEEN 1 AND 120", name="ck_exam_collection_display_name_length"),
+        CheckConstraint("description IS NULL OR length(description) <= 1000", name="ck_exam_collection_description_length"),
+        UniqueConstraint("slug", name="uq_exam_collection_slug"),
+        UniqueConstraint("name_key", name="uq_exam_collection_name_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    syllabus_version: Mapped[str | None] = mapped_column(String(100))
+    region: Mapped[str | None] = mapped_column(String(8))
+    source_name: Mapped[str | None] = mapped_column(String(200))
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    source_published_at: Mapped[date | None] = mapped_column(Date)
+    reviewed_at: Mapped[date | None] = mapped_column(Date)
+    review_due_at: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    taxonomy_mappings: Mapped[list["ExamCollectionCategory"]] = relationship(
+        back_populates="collection", order_by="(ExamCollectionCategory.sort_order, ExamCollectionCategory.category_id)"
+    )
+
+
+class ExamCollectionCategory(Base):
+    """Ordered taxonomy mapping for a curated exam collection."""
+
+    __tablename__ = "exam_collection_categories"
+    __table_args__ = (
+        CheckConstraint("sort_order >= 0", name="ck_exam_mapping_sort_order"),
+        UniqueConstraint("collection_id", "sort_order", name="uq_exam_mapping_order"),
+        Index("ix_exam_collection_categories_category_id", "category_id"),
+    )
+
+    collection_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("exam_collections.id", ondelete="RESTRICT"), primary_key=True
+    )
+    category_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("categories.id", ondelete="RESTRICT"), primary_key=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    collection: Mapped[ExamCollection] = relationship(back_populates="taxonomy_mappings")
+    category: Mapped[Category] = relationship()
+
+
 class AnonymousOwner(Base):
     __tablename__ = "anonymous_owners"
 
@@ -165,6 +222,21 @@ class QuizQuestion(Base):
     __table_args__ = (
         UniqueConstraint("quiz_id", "position", name="uq_question_quiz_position"),
         CheckConstraint("position >= 0", name="ck_question_position"),
+        CheckConstraint("question_format IN ('multiple_choice', 'open_ended', 'puzzle', 'sequence')", name="ck_question_format"),
+        CheckConstraint("review_status IN ('unreviewed', 'reviewed', 'needs_review', 'expired')", name="ck_question_review_status"),
+        CheckConstraint(
+            "(question_format = 'multiple_choice' AND option_a IS NOT NULL AND option_b IS NOT NULL "
+            "AND option_c IS NOT NULL AND option_d IS NOT NULL AND correct_option_index IS NOT NULL "
+            "AND format_payload IS NULL) OR "
+            "(question_format <> 'multiple_choice' AND option_a IS NULL AND option_b IS NULL "
+            "AND option_c IS NULL AND option_d IS NULL AND correct_option_index IS NULL "
+            "AND format_payload IS NOT NULL)",
+            name="ck_question_format_representation",
+        ),
+        CheckConstraint(
+            "format_payload IS NULL OR length(CAST(format_payload AS VARCHAR)) <= 20000",
+            name="ck_question_format_payload_size",
+        ),
         CheckConstraint("length(trim(prompt)) BETWEEN 1 AND 500", name="ck_question_prompt_length"),
         CheckConstraint("length(trim(option_a)) BETWEEN 1 AND 200", name="ck_question_option_a_length"),
         CheckConstraint("length(trim(option_b)) BETWEEN 1 AND 200", name="ck_question_option_b_length"),
@@ -191,11 +263,13 @@ class QuizQuestion(Base):
     quiz_id: Mapped[str] = mapped_column(String(64), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     prompt: Mapped[str] = mapped_column(String(500), nullable=False)
-    option_a: Mapped[str] = mapped_column(String(200), nullable=False)
-    option_b: Mapped[str] = mapped_column(String(200), nullable=False)
-    option_c: Mapped[str] = mapped_column(String(200), nullable=False)
-    option_d: Mapped[str] = mapped_column(String(200), nullable=False)
-    correct_option_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    option_a: Mapped[str | None] = mapped_column(String(200))
+    option_b: Mapped[str | None] = mapped_column(String(200))
+    option_c: Mapped[str | None] = mapped_column(String(200))
+    option_d: Mapped[str | None] = mapped_column(String(200))
+    correct_option_index: Mapped[int | None] = mapped_column(Integer)
+    question_format: Mapped[str] = mapped_column(String(24), nullable=False, default="multiple_choice", server_default="multiple_choice")
+    format_payload: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True))
     explanation: Mapped[str | None] = mapped_column(String(1000))
     category: Mapped[str | None] = mapped_column(String(50))
     category_id: Mapped[str | None] = mapped_column(
@@ -204,6 +278,14 @@ class QuizQuestion(Base):
     difficulty: Mapped[str | None] = mapped_column(String(10))
     time_limit_seconds: Mapped[int | None] = mapped_column(Integer)
     provenance: Mapped[str] = mapped_column(String(24), nullable=False, default="user_authored")
+    language: Mapped[str] = mapped_column(String(35), nullable=False, default="en", server_default="en")
+    learning_levels: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+    review_status: Mapped[str] = mapped_column(String(16), nullable=False, default="unreviewed", server_default="unreviewed")
+    source_name: Mapped[str | None] = mapped_column(String(200))
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    source_published_at: Mapped[date | None] = mapped_column(Date)
+    verified_at: Mapped[date | None] = mapped_column(Date)
+    review_due_at: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 

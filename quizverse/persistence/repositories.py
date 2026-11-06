@@ -7,13 +7,15 @@ import secrets
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Iterable
+from datetime import date
+from typing import Any, Iterable
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from quizverse.persistence.db import Database
-from quizverse.persistence.models import AnonymousOwner, Quiz, QuizQuestion
+from quizverse.persistence.models import AnonymousOwner, Category, Quiz, QuizQuestion, Tag
+from quizverse.question_content import validate_format_payload, validate_question_metadata
 
 _CATEGORY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,49}$")
 
@@ -21,14 +23,26 @@ _CATEGORY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,49}$")
 @dataclass(frozen=True, slots=True)
 class QuestionRecord:
     prompt: str
-    options: tuple[str, str, str, str]
-    correct_option_index: int
+    options: tuple[str, str, str, str] | None = None
+    correct_option_index: int | None = None
     explanation: str | None = None
     category: str | None = None
     difficulty: str | None = None
     time_limit_seconds: int | None = None
     provenance: str = "user_authored"
     id: str | None = None
+    question_format: str = "multiple_choice"
+    format_payload: dict[str, Any] | None = None
+    category_id: str | None = None
+    tags: tuple[str, ...] = ()
+    language: str = "en"
+    learning_levels: tuple[str, ...] = ()
+    review_status: str = "unreviewed"
+    source_name: str | None = None
+    source_url: str | None = None
+    source_published_at: date | None = None
+    verified_at: date | None = None
+    review_due_at: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,14 +109,21 @@ def validate_quiz_record(record: QuizRecord) -> QuizRecord:
 
 def validate_question_record(record: QuestionRecord) -> QuestionRecord:
     prompt = _plain_text(record.prompt, "Question", 500)
-    if not isinstance(record.options, tuple) or len(record.options) != 4:
-        raise ValueError("A question must have exactly four answer options.")
-    options = tuple(_plain_text(option, "Answer option", 200) or "" for option in record.options)
-    normalized_options = [unicodedata.normalize("NFC", option).casefold() for option in options]
-    if len(set(normalized_options)) != 4:
-        raise ValueError("Answer options must be distinct.")
-    if isinstance(record.correct_option_index, bool) or not 0 <= record.correct_option_index <= 3:
-        raise ValueError("Correct option index must be from 0 to 3.")
+    if record.question_format == "multiple_choice":
+        if not isinstance(record.options, tuple) or len(record.options) != 4:
+            raise ValueError("A multiple-choice question must have exactly four answer options.")
+        options = tuple(_plain_text(option, "Answer option", 200) or "" for option in record.options)
+        normalized_options = [unicodedata.normalize("NFC", option).casefold() for option in options]
+        if len(set(normalized_options)) != 4:
+            raise ValueError("Answer options must be distinct.")
+        if isinstance(record.correct_option_index, bool) or record.correct_option_index is None or not 0 <= record.correct_option_index <= 3:
+            raise ValueError("Correct option index must be from 0 to 3.")
+    else:
+        if record.options is not None or record.correct_option_index is not None:
+            raise ValueError("Non-MCQ formats must not use legacy options or answer-index fields.")
+        options = None
+        if record.question_format not in {"open_ended", "puzzle", "sequence"}:
+            raise ValueError("Question format is not supported.")
     explanation = _plain_text(record.explanation, "Explanation", 1000, required=False)
     category = _category(record.category, optional=True)
     if record.difficulty is not None and record.difficulty not in {"easy", "medium", "hard"}:
@@ -113,10 +134,30 @@ def validate_question_record(record: QuestionRecord) -> QuestionRecord:
         raise ValueError("Question time limit must be between 5 and 120 seconds.")
     if record.provenance not in {"built_in_reviewed", "user_authored", "ai_draft", "ai_assisted"}:
         raise ValueError("Question provenance is invalid.")
+    format_payload = validate_format_payload(record.question_format, record.format_payload)
+    metadata = validate_question_metadata(
+        language=record.language,
+        learning_levels=list(record.learning_levels),
+        source_name=record.source_name,
+        source_url=record.source_url,
+        source_published_at=record.source_published_at,
+        verified_at=record.verified_at,
+        review_due_at=record.review_due_at,
+        tags=list(record.tags),
+        category_id=record.category_id,
+    )
+    if record.review_status not in {"unreviewed", "reviewed", "needs_review", "expired"}:
+        raise ValueError("Question review status is invalid.")
     return QuestionRecord(
         prompt=prompt or "", options=options, correct_option_index=record.correct_option_index,
         explanation=explanation, category=category, difficulty=record.difficulty,
         time_limit_seconds=record.time_limit_seconds, provenance=record.provenance, id=record.id,
+        question_format=record.question_format, format_payload=format_payload,
+        category_id=metadata["category_id"], tags=tuple(metadata["tags"]),
+        language=metadata["language"], learning_levels=tuple(metadata["learning_levels"]),
+        review_status=record.review_status, source_name=metadata["source_name"],
+        source_url=metadata["source_url"], source_published_at=metadata["source_published_at"],
+        verified_at=metadata["verified_at"], review_due_at=metadata["review_due_at"],
     )
 
 
@@ -127,6 +168,8 @@ def _insert_quiz(session, owner_id: str | None, quiz: QuizRecord, questions: Ite
         raise ValueError("A quiz cannot contain more than 200 questions.")
     if quiz.status == "published" and not validated_questions:
         raise ValueError("A published quiz must contain at least one valid question.")
+    if quiz.status == "published" and any(item.question_format != "multiple_choice" for item in validated_questions):
+        raise ValueError("Only multiple-choice questions can be published for current player experiences.")
     if quiz.provenance == "built_in_reviewed" and owner_id is not None:
         raise ValueError("Built-in reviewed quizzes cannot have an anonymous owner.")
     if quiz.provenance != "built_in_reviewed" and owner_id is None:
@@ -149,19 +192,48 @@ def _insert_quiz(session, owner_id: str | None, quiz: QuizRecord, questions: Ite
     session.add(row)
     session.flush()
     for position, question in enumerate(validated_questions):
-        options = question.options
-        row.questions.append(
-            QuizQuestion(
-                id=question.id or secrets.token_hex(20), position=position,
-                prompt=question.prompt, option_a=options[0], option_b=options[1],
-                option_c=options[2], option_d=options[3],
-                correct_option_index=question.correct_option_index, explanation=question.explanation,
-                category=question.category, difficulty=question.difficulty,
-                time_limit_seconds=question.time_limit_seconds, provenance=question.provenance,
-            )
-        )
+        row.questions.append(_question_model(session, question, quiz_id, position))
     session.flush()
     return row
+
+
+def _question_model(session, question: QuestionRecord, quiz_id: str, position: int) -> QuizQuestion:
+    if question.category_id is not None:
+        category = session.get(Category, question.category_id)
+        if category is None or not category.is_active:
+            raise ValueError("Question category must reference an active taxonomy category.")
+    tags = list(session.scalars(select(Tag).where(Tag.slug.in_(question.tags), Tag.is_active.is_(True)))) if question.tags else []
+    if len(tags) != len(question.tags):
+        raise ValueError("Every question tag must reference an active taxonomy tag.")
+    options = question.options
+    return QuizQuestion(
+        id=question.id or secrets.token_hex(20),
+        quiz_id=quiz_id,
+        position=position,
+        prompt=question.prompt,
+        option_a=options[0] if options else None,
+        option_b=options[1] if options else None,
+        option_c=options[2] if options else None,
+        option_d=options[3] if options else None,
+        correct_option_index=question.correct_option_index,
+        explanation=question.explanation,
+        category=question.category,
+        category_id=question.category_id,
+        difficulty=question.difficulty,
+        time_limit_seconds=question.time_limit_seconds,
+        provenance=question.provenance,
+        question_format=question.question_format,
+        format_payload=question.format_payload,
+        language=question.language,
+        learning_levels=list(question.learning_levels),
+        review_status=question.review_status,
+        source_name=question.source_name,
+        source_url=question.source_url,
+        source_published_at=question.source_published_at,
+        verified_at=question.verified_at,
+        review_due_at=question.review_due_at,
+        tags=tags,
+    )
 
 
 class QuizRepository:
@@ -183,7 +255,7 @@ class QuizRepository:
         with self._database.session() as session:
             return session.scalar(
                 select(Quiz)
-                .options(selectinload(Quiz.questions))
+                .options(selectinload(Quiz.questions).selectinload(QuizQuestion.tags))
                 .where(Quiz.id == quiz_id, Quiz.deleted_at.is_(None))
             )
 
@@ -197,6 +269,7 @@ class QuizRepository:
                 Quiz.status == "published",
                 Quiz.visibility == "public",
                 Quiz.deleted_at.is_(None),
+                ~Quiz.questions.any(QuizQuestion.question_format != "multiple_choice"),
             )
         )
         if category is not None:
@@ -213,7 +286,7 @@ class QuizRepository:
     def list_owned(self, owner_id: str, *, limit: int = 100) -> list[Quiz]:
         statement = (
             select(Quiz)
-            .options(selectinload(Quiz.questions))
+            .options(selectinload(Quiz.questions).selectinload(QuizQuestion.tags))
             .where(Quiz.owner_id == owner_id, Quiz.deleted_at.is_(None))
             .order_by(Quiz.updated_at.desc(), Quiz.id)
             .limit(min(max(limit, 1), 200))
@@ -239,7 +312,7 @@ class QuizRepository:
         with self._database.sessions.begin() as session:
             quiz = session.scalar(
                 select(Quiz)
-                .options(selectinload(Quiz.questions))
+                .options(selectinload(Quiz.questions).selectinload(QuizQuestion.tags))
                 .where(Quiz.id == quiz_id, Quiz.deleted_at.is_(None))
                 .with_for_update()
             )
@@ -274,6 +347,13 @@ class QuizRepository:
             )
             if quiz.status == "published" and resulting_question_count < 1:
                 raise ValueError("A published quiz must contain at least one valid question.")
+            resulting_formats = (
+                [question.question_format for question in validated_questions]
+                if validated_questions is not None
+                else [question.question_format for question in quiz.questions]
+            )
+            if quiz.status == "published" and any(item != "multiple_choice" for item in resulting_formats):
+                raise ValueError("Only multiple-choice questions can be published for current player experiences.")
 
             quiz.title = validated_quiz.title
             quiz.description = validated_quiz.description
@@ -289,22 +369,7 @@ class QuizRepository:
                 session.flush()
                 session.expire(quiz, ["questions"])
                 quiz.questions = [
-                    QuizQuestion(
-                        id=question.id or secrets.token_hex(20),
-                        quiz_id=quiz_id,
-                        position=position,
-                        prompt=question.prompt,
-                        option_a=question.options[0],
-                        option_b=question.options[1],
-                        option_c=question.options[2],
-                        option_d=question.options[3],
-                        correct_option_index=question.correct_option_index,
-                        explanation=question.explanation,
-                        category=question.category,
-                        difficulty=question.difficulty,
-                        time_limit_seconds=question.time_limit_seconds,
-                        provenance=question.provenance,
-                    )
+                    _question_model(session, question, quiz_id, position)
                     for position, question in enumerate(validated_questions)
                 ]
             session.flush()
@@ -314,7 +379,7 @@ class QuizRepository:
         with self._database.sessions.begin() as session:
             quiz = session.scalar(
                 select(Quiz)
-                .options(selectinload(Quiz.questions))
+                .options(selectinload(Quiz.questions).selectinload(QuizQuestion.tags))
                 .where(Quiz.id == quiz_id, Quiz.deleted_at.is_(None))
                 .with_for_update()
             )
@@ -322,6 +387,8 @@ class QuizRepository:
                 return None
             if published and not quiz.questions:
                 raise ValueError("A quiz needs at least one question before it can be published.")
+            if published and any(question.question_format != "multiple_choice" for question in quiz.questions):
+                raise ValueError("Only multiple-choice questions can be published for current player experiences.")
             new_status = "published" if published else "draft"
             if quiz.status != new_status:
                 quiz.status = new_status

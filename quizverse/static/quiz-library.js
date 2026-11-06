@@ -102,14 +102,27 @@
   }
 
   function questionDraft(question = {}) {
+    const questionFormat = question.format || 'multiple_choice';
     return {
       prompt: question.prompt || '',
-      options: Array.isArray(question.options) ? [...question.options] : ['', '', '', ''],
-      correct_option_index: Number.isInteger(question.correct_option_index) ? question.correct_option_index : 0,
+      format: questionFormat,
+      format_payload: question.format_payload ? JSON.parse(JSON.stringify(question.format_payload)) : null,
+      options: Array.isArray(question.options) ? [...question.options] : questionFormat === 'multiple_choice' ? ['', '', '', ''] : null,
+      correct_option_index: Number.isInteger(question.correct_option_index) ? question.correct_option_index : questionFormat === 'multiple_choice' ? 0 : null,
       explanation: question.explanation || '',
       category: question.category || '',
+      category_id: question.category_id || null,
+      tags: Array.isArray(question.tags) ? [...question.tags] : [],
       difficulty: question.difficulty || '',
       time_limit_seconds: question.time_limit_seconds ?? '',
+      language: question.language || 'en',
+      learning_levels: Array.isArray(question.learning_levels) ? [...question.learning_levels] : [],
+      source_name: question.source_name || null,
+      source_url: question.source_url || null,
+      source_published_at: question.source_published_at || null,
+      verified_at: question.verified_at || null,
+      review_due_at: question.review_due_at || null,
+      review_status: question.review_status || 'unreviewed',
     };
   }
 
@@ -344,13 +357,17 @@
     draft.questions.forEach((question, index) => {
       const label = `Question ${index + 1}`;
       if (!question.prompt.trim() || question.prompt.trim().length > 500) problems.push(`${label}: add a prompt (up to 500 characters).`);
-      if (question.options.length !== 4 || question.options.some(option => !String(option).trim() || String(option).length > 200)) {
-        problems.push(`${label}: provide four answer options (up to 200 characters each).`);
-      } else if (new Set(question.options.map(option => option.trim().normalize('NFC').toLocaleLowerCase())).size !== 4) {
-        problems.push(`${label}: answer options must be distinct.`);
-      }
-      if (!Number.isInteger(Number(question.correct_option_index)) || Number(question.correct_option_index) < 0 || Number(question.correct_option_index) > 3) {
-        problems.push(`${label}: select the correct answer.`);
+      if (question.format === 'multiple_choice') {
+        if (!Array.isArray(question.options) || question.options.length !== 4 || question.options.some(option => !String(option).trim() || String(option).length > 200)) {
+          problems.push(`${label}: provide four answer options (up to 200 characters each).`);
+        } else if (new Set(question.options.map(option => option.trim().normalize('NFC').toLocaleLowerCase())).size !== 4) {
+          problems.push(`${label}: answer options must be distinct.`);
+        }
+        if (!Number.isInteger(Number(question.correct_option_index)) || Number(question.correct_option_index) < 0 || Number(question.correct_option_index) > 3) {
+          problems.push(`${label}: select the correct answer.`);
+        }
+      } else if (!question.format_payload || typeof question.format_payload !== 'object') {
+        problems.push(`${label}: its structured format content is missing.`);
       }
       if (question.explanation.length > 1000) problems.push(`${label}: explanation must be at most 1,000 characters.`);
       if (question.time_limit_seconds !== null && question.time_limit_seconds !== '' && (question.time_limit_seconds < 5 || question.time_limit_seconds > 120)) {
@@ -371,16 +388,31 @@
       default_time_limit_seconds: Number(draft.default_time_limit_seconds),
       questions: draft.questions.map(question => ({
         prompt: question.prompt.trim(),
-        options: question.options.map(option => option.trim()),
-        correct_option_index: Number(question.correct_option_index),
+        format: question.format || 'multiple_choice',
+        format_payload: question.format_payload,
+        options: Array.isArray(question.options) ? question.options.map(option => option.trim()) : null,
+        correct_option_index: Number.isInteger(Number(question.correct_option_index)) ? Number(question.correct_option_index) : null,
         explanation: question.explanation.trim() || null,
         // The author response contract requires resolved values; mirror the quiz
         // defaults used by the player projection when an override is blank.
-        category: question.category.trim() || categoryKey(draft.category),
-        difficulty: question.difficulty || draft.difficulty,
-        time_limit_seconds: question.time_limit_seconds === '' || question.time_limit_seconds == null
-          ? Number(draft.default_time_limit_seconds)
-          : Number(question.time_limit_seconds),
+        category: question.format === 'multiple_choice'
+          ? question.category.trim() || categoryKey(draft.category)
+          : question.category.trim() || null,
+        difficulty: question.format === 'multiple_choice' ? question.difficulty || draft.difficulty : question.difficulty || null,
+        time_limit_seconds: question.format !== 'multiple_choice'
+          ? (question.time_limit_seconds === '' ? null : question.time_limit_seconds)
+          : question.time_limit_seconds === '' || question.time_limit_seconds == null
+            ? Number(draft.default_time_limit_seconds)
+            : Number(question.time_limit_seconds),
+        category_id: question.category_id,
+        tags: question.tags,
+        language: question.language,
+        learning_levels: question.learning_levels,
+        source_name: question.source_name,
+        source_url: question.source_url,
+        source_published_at: question.source_published_at,
+        verified_at: question.verified_at,
+        review_due_at: question.review_due_at,
       })),
       ...(state.generationTicket ? { generation_ticket: state.generationTicket } : {}),
     };
@@ -521,6 +553,13 @@
   }
 
   function renderQuestion(question, index, preview = false) {
+    const format = question.format || 'multiple_choice';
+    if (format !== 'multiple_choice') {
+      if (preview) {
+        return `<article class="preview-question"><div class="preview-question-meta"><span>QUESTION ${String(index + 1).padStart(2, '0')}</span><span>${escapeHtml(format.replaceAll('_', ' '))}</span></div><h2>${escapeHtml(question.prompt)}</h2><p class="preview-privacy">This format is saved for future experiences and is not playable in the current preview.</p></article>`;
+      }
+      return `<article class="question-editor" data-question-index="${index}" data-question-format="${escapeHtml(format)}"><div class="question-editor-head"><div><span class="question-number">QUESTION ${String(index + 1).padStart(2, '0')}</span><span class="microcopy"> · ${escapeHtml(format.replaceAll('_', ' '))}</span></div><div class="question-order-actions"><button class="icon-button" type="button" data-quiz-action="move-question" data-direction="up" data-index="${index}" aria-label="Move question ${index + 1} up" ${index === 0 ? 'disabled' : ''}>↑</button><button class="icon-button" type="button" data-quiz-action="move-question" data-direction="down" data-index="${index}" aria-label="Move question ${index + 1} down" ${index === state.draft.questions.length - 1 ? 'disabled' : ''}>↓</button><button class="icon-button danger-icon" type="button" data-quiz-action="remove-question" data-index="${index}" aria-label="Remove question ${index + 1}">×</button></div></div><p class="field-hint">Structured answer content is preserved for the owner; this format is not playable in current modes.</p><label class="form-label" for="question-prompt-${index}">Question prompt</label><textarea class="field editor-textarea" id="question-prompt-${index}" maxlength="500" data-question-field="prompt" required>${escapeHtml(question.prompt)}</textarea><pre class="field-hint">${escapeHtml(JSON.stringify(question.format_payload, null, 2))}</pre><label><span>Category (optional)</span><input class="field" maxlength="50" data-question-field="category" value="${escapeHtml(question.category)}"></label><label><span>Difficulty</span><select class="field" data-question-field="difficulty"><option value="">Use quiz difficulty</option>${['easy', 'medium', 'hard'].map(value => `<option value="${value}" ${question.difficulty === value ? 'selected' : ''}>${value[0].toUpperCase()}${value.slice(1)}</option>`).join('')}</select></label><label><span>Time limit (optional)</span><input class="field" type="number" min="5" max="120" data-question-field="time_limit_seconds" value="${escapeHtml(question.time_limit_seconds)}" placeholder="Default"></label><label class="form-label" for="question-explanation-${index}">Explanation (optional)</label><textarea class="field editor-textarea explanation-input" id="question-explanation-${index}" maxlength="1000" data-question-field="explanation">${escapeHtml(question.explanation)}</textarea></article>`;
+    }
     if (preview) {
       return `<article class="preview-question"><div class="preview-question-meta"><span>QUESTION ${String(index + 1).padStart(2, '0')}</span><span>${escapeHtml(question.category || state.draft?.category || 'General')}</span></div><h2>${escapeHtml(question.prompt)}</h2><div class="preview-options">${question.options.map((option, optionIndex) => `<div class="preview-option"><span>${String.fromCharCode(65 + optionIndex)}</span>${escapeHtml(option)}</div>`).join('')}</div><p class="preview-time">${Number(question.time_limit_seconds || state.draft?.default_time_limit_seconds || 15)} seconds to answer</p></article>`;
     }

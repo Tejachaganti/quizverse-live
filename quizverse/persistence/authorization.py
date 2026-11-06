@@ -8,6 +8,7 @@ not call ``QuizRepository.get`` directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Iterable
 
 from quizverse.persistence.capabilities import (
@@ -57,13 +58,25 @@ class AuthorQuestionView:
     id: str
     position: int
     prompt: str
-    options: tuple[str, str, str, str]
-    correct_option_index: int
+    options: tuple[str, str, str, str] | None
+    correct_option_index: int | None
     explanation: str | None
     category: str | None
     difficulty: str | None
     time_limit_seconds: int | None
     provenance: str
+    format: str
+    format_payload: dict[str, object] | None
+    category_id: str | None
+    tags: tuple[str, ...]
+    language: str
+    learning_levels: tuple[str, ...]
+    review_status: str
+    source_name: str | None
+    source_url: str | None
+    source_published_at: date | None
+    verified_at: date | None
+    review_due_at: date | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +97,8 @@ class AuthorQuizView:
 
 
 def _player_projection(quiz: Quiz) -> PlayerQuizView:
+    if any(question.question_format != "multiple_choice" for question in quiz.questions):
+        raise ValueError("This question format is not supported by current player experiences.")
     return PlayerQuizView(
         id=quiz.id,
         title=quiz.title,
@@ -96,7 +111,7 @@ def _player_projection(quiz: Quiz) -> PlayerQuizView:
                 id=question.id,
                 position=question.position,
                 prompt=question.prompt,
-                options=(question.option_a, question.option_b, question.option_c, question.option_d),
+                options=(question.option_a, question.option_b, question.option_c, question.option_d),  # type: ignore[arg-type]
                 category=question.category or quiz.category,
                 difficulty=question.difficulty or quiz.difficulty,
                 time_limit_seconds=question.time_limit_seconds or quiz.default_time_limit_seconds,
@@ -123,13 +138,27 @@ def _author_projection(quiz: Quiz) -> AuthorQuizView:
                 id=question.id,
                 position=question.position,
                 prompt=question.prompt,
-                options=(question.option_a, question.option_b, question.option_c, question.option_d),
+                options=(question.option_a, question.option_b, question.option_c, question.option_d)
+                if question.option_a is not None and question.option_b is not None
+                and question.option_c is not None and question.option_d is not None else None,
                 correct_option_index=question.correct_option_index,
                 explanation=question.explanation,
                 category=question.category,
                 difficulty=question.difficulty,
                 time_limit_seconds=question.time_limit_seconds,
                 provenance=question.provenance,
+                format=question.question_format,
+                format_payload=question.format_payload,
+                category_id=question.category_id,
+                tags=tuple(tag.slug for tag in question.tags),
+                language=question.language,
+                learning_levels=tuple(question.learning_levels or ()),
+                review_status=question.review_status,
+                source_name=question.source_name,
+                source_url=question.source_url,
+                source_published_at=question.source_published_at,
+                verified_at=question.verified_at,
+                review_due_at=question.review_due_at,
             )
             for question in quiz.questions
         ),
@@ -245,6 +274,18 @@ class QuizAccessService:
                     difficulty=question.difficulty,
                     time_limit_seconds=question.time_limit_seconds,
                     provenance="user_authored",
+                    question_format=question.question_format,
+                    format_payload=question.format_payload,
+                    category_id=question.category_id,
+                    tags=tuple(tag.slug for tag in question.tags),
+                    language=question.language,
+                    learning_levels=tuple(question.learning_levels or ()),
+                    review_status=question.review_status,
+                    source_name=question.source_name,
+                    source_url=question.source_url,
+                    source_published_at=question.source_published_at,
+                    verified_at=question.verified_at,
+                    review_due_at=question.review_due_at,
                 )
                 for question in source.questions
             ],
@@ -333,6 +374,8 @@ class QuizAccessService:
         """
         quiz = self._quizzes.get(quiz_id)
         if quiz is None or quiz.status != "published" or quiz.visibility not in {"public", "private"}:
+            return None
+        if any(question.question_format != "multiple_choice" for question in quiz.questions):
             return None
         if quiz.visibility == "private":
             if share_capability is None:

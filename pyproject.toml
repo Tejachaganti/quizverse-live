@@ -25,6 +25,7 @@ postgres = ["psycopg[binary]>=3.2,<4.0"]
 quizverse-live = "quizverse.__main__:main"
 quizverse-seed-builtins = "quizverse.persistence.seeding:main"
 quizverse-seed-taxonomy = "quizverse.persistence.taxonomy_seeding:main"
+quizverse-seed-exam-collections = "quizverse.persistence.exam_seeding:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
