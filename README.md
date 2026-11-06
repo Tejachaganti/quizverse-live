@@ -76,6 +76,12 @@ After installing the project, copy `.env.example` to `.env`. From `quizverse-liv
 
 The equivalent cross-platform commands are `alembic upgrade head` and `quizverse-seed-builtins`. Seeding is optional and idempotent. Built-in questions receive content-derived stable IDs and `built_in_reviewed` provenance. If the reviewed bank changes, create a new versioned bank identity instead of silently rewriting the seeded bank.
 
+### Question taxonomy (Stage 7.0B)
+
+The taxonomy migration is explicit and does not run during application startup. After upgrading the database, seed the categories, subcategories, and reusable tags with `quizverse-seed-taxonomy` (or `python -m quizverse.persistence.taxonomy_seeding`). The seed command is additive and preserves existing category/tag display metadata. It also maps only recognized legacy category labels to nullable taxonomy references, keeps the original free-text values unchanged, and prints mapped and unmapped value counts. Unrecognized or custom values remain readable and unmapped.
+
+Read-only discovery endpoints are `GET /api/categories`, `GET /api/categories/{slug}/topics`, and `GET /api/tags?limit=100&offset=0`. The category endpoint returns active roots as a nested tree and omits inactive nodes and their branches. The topics endpoint returns all active descendants in depth-first order, each with its direct `parent_id`. Tags are active-only and paginated with a maximum page size of 100 and offset of 10,000. Category and tag records expose stable IDs/slugs, display names, and localization keys. These endpoints do not return quiz records or answer data. No player preference or question-selection behavior is attached to the taxonomy.
+
 Inspect the applied revision with `alembic current`; create a future migration with `alembic revision --autogenerate -m "describe schema change"` and review its generated operations before applying it. `alembic downgrade -1` reverts one revision and can remove persisted data, so back up the database first. Migrations are never run automatically by the app.
 
 For a PostgreSQL database, configure a driver URL such as `postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE` in the server environment and install `pip install -e '.[postgres]'`. Do not place real credentials in `.env.example` or source control. Alembic must be run explicitly against the configured database before using persistence features. The current game process does not connect active rooms to PostgreSQL.

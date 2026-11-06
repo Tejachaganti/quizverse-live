@@ -31,6 +31,7 @@ from quizverse.protocol import (
     EVENT_ADAPTER,
 )
 from quizverse.quiz_api import install_quiz_api
+from quizverse.taxonomy_api import install_taxonomy_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -173,6 +174,7 @@ def create_app(
     app.state.database = persistence
 
     install_quiz_api(app, QuizAccessService(persistence), GenerationService(ai_provider))
+    install_taxonomy_api(app, persistence)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool]:

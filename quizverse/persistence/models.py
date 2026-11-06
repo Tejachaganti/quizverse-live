@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -12,6 +13,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Index,
+    true,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -23,6 +26,79 @@ def utc_now() -> datetime:
 
 class Base(DeclarativeBase):
     """Declarative base used by Alembic migrations and persistence tests."""
+
+
+class Category(Base):
+    """Localized display metadata for a stable, hierarchical category slug."""
+
+    __tablename__ = "categories"
+    __table_args__ = (
+        CheckConstraint("id <> parent_id OR parent_id IS NULL", name="ck_category_not_own_parent"),
+        CheckConstraint("sort_order >= 0", name="ck_category_sort_order"),
+        CheckConstraint("length(slug) BETWEEN 1 AND 80", name="ck_category_slug_length"),
+        CheckConstraint("length(display_name) BETWEEN 1 AND 120", name="ck_category_display_name_length"),
+        UniqueConstraint("slug", name="uq_category_slug"),
+        UniqueConstraint("name_key", name="uq_category_name_key"),
+        Index("ix_categories_parent_active_order", "parent_id", "is_active", "sort_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey("categories.id", ondelete="RESTRICT"), index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    parent: Mapped["Category | None"] = relationship(
+        back_populates="children", remote_side="Category.id", foreign_keys=[parent_id]
+    )
+    children: Mapped[list["Category"]] = relationship(
+        back_populates="parent", order_by="(Category.sort_order, Category.slug)"
+    )
+
+
+class Tag(Base):
+    """Reusable, localized descriptors that can be attached to quiz questions."""
+
+    __tablename__ = "tags"
+    __table_args__ = (
+        CheckConstraint("length(slug) BETWEEN 1 AND 80", name="ck_tag_slug_length"),
+        CheckConstraint("length(display_name) BETWEEN 1 AND 120", name="ck_tag_display_name_length"),
+        UniqueConstraint("slug", name="uq_tag_slug"),
+        UniqueConstraint("name_key", name="uq_tag_name_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=true())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    questions: Mapped[list["QuizQuestion"]] = relationship(
+        secondary="question_tags", back_populates="tags"
+    )
+
+
+class QuestionTag(Base):
+    """Association rows keep reusable tag references explicit and referentially safe."""
+
+    __tablename__ = "question_tags"
+    __table_args__ = (Index("ix_question_tags_tag_id", "tag_id"),)
+
+    question_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("quiz_questions.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("tags.id", ondelete="RESTRICT"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
 class AnonymousOwner(Base):
@@ -62,6 +138,9 @@ class Quiz(Base):
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))
     category: Mapped[str] = mapped_column(String(50), nullable=False)
+    category_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey("categories.id", ondelete="RESTRICT", name="fk_quizzes_category_id_categories"), index=True
+    )
     difficulty: Mapped[str] = mapped_column(String(10), nullable=False, default="medium")
     visibility: Mapped[str] = mapped_column(String(10), nullable=False, default="private")
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="draft")
@@ -74,6 +153,7 @@ class Quiz(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     owner: Mapped[AnonymousOwner | None] = relationship(back_populates="quizzes")
+    taxonomy_category: Mapped[Category | None] = relationship(foreign_keys=[category_id])
     questions: Mapped[list["QuizQuestion"]] = relationship(
         back_populates="quiz", cascade="all, delete-orphan", order_by="QuizQuestion.position"
     )
@@ -118,6 +198,9 @@ class QuizQuestion(Base):
     correct_option_index: Mapped[int] = mapped_column(Integer, nullable=False)
     explanation: Mapped[str | None] = mapped_column(String(1000))
     category: Mapped[str | None] = mapped_column(String(50))
+    category_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey("categories.id", ondelete="RESTRICT", name="fk_quiz_questions_category_id_categories"), index=True
+    )
     difficulty: Mapped[str | None] = mapped_column(String(10))
     time_limit_seconds: Mapped[int | None] = mapped_column(Integer)
     provenance: Mapped[str] = mapped_column(String(24), nullable=False, default="user_authored")
@@ -125,6 +208,8 @@ class QuizQuestion(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     quiz: Mapped[Quiz] = relationship(back_populates="questions")
+    taxonomy_category: Mapped[Category | None] = relationship(foreign_keys=[category_id])
+    tags: Mapped[list[Tag]] = relationship(secondary="question_tags", back_populates="questions")
 
 
 class CapabilityGrant(Base):
