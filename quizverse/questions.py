@@ -1,0 +1,35 @@
+"""Small, reviewed general-knowledge bank used by the server engine."""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class Question:
+    category: str
+    prompt: str
+    options: tuple[str, str, str, str]
+    answer: int
+
+
+QUESTIONS: tuple[Question, ...] = (
+    Question("Science", "Which planet is known as the Red Planet?", ("Venus", "Mars", "Jupiter", "Mercury"), 1),
+    Question("Geography", "What is the capital city of Australia?", ("Sydney", "Perth", "Canberra", "Melbourne"), 2),
+    Question("Technology", "What does CPU stand for?", ("Central Processing Unit", "Computer Power Utility", "Core Program Unit", "Central Performance User"), 0),
+    Question("Nature", "Which is the largest mammal on Earth?", ("African elephant", "Blue whale", "Giraffe", "Orca"), 1),
+    Question("Space", "Which planet is famous for its prominent rings?", ("Neptune", "Earth", "Saturn", "Mars"), 2),
+    Question("Literature", "Who wrote the play Romeo and Juliet?", ("Charles Dickens", "Jane Austen", "William Shakespeare", "Mark Twain"), 2),
+    Question("Science", "What is the chemical symbol for gold?", ("Ag", "Gd", "Go", "Au"), 3),
+    Question("Geography", "Which is the largest ocean on Earth?", ("Atlantic Ocean", "Indian Ocean", "Pacific Ocean", "Arctic Ocean"), 2),
+    Question("History", "The ancient Olympic Games originated in which country?", ("Italy", "Greece", "Egypt", "Turkey"), 1),
+    Question("Art", "How many keys are there on a standard modern piano?", ("66", "72", "88", "92"), 2),
+    Question("Science", "Which gas do plants absorb from the atmosphere?", ("Oxygen", "Nitrogen", "Carbon dioxide", "Hydrogen"), 2),
+    Question("General", "How many sides does a hexagon have?", ("Five", "Six", "Seven", "Eight"), 1),
+    Question("Technology", "Which language is primarily used to style web pages?", ("HTML", "CSS", "SQL", "Python"), 1),
+    Question("Geography", "Which country is home to the city of Kyoto?", ("China", "South Korea", "Japan", "Thailand"), 2),
+    Question("Nature", "What is the fastest land animal?", ("Lion", "Cheetah", "Pronghorn", "Horse"), 1),
+    Question("Science", "What is the boiling point of water at sea level?", ("90°C", "100°C", "110°C", "120°C"), 1),
+    Question("General", "How many colors are traditionally named in a rainbow?", ("Five", "Six", "Seven", "Eight"), 2),
+    Question("History", "Which civilization built Machu Picchu?", ("Maya", "Aztec", "Inca", "Roman"), 2),
+    Question("Technology", "What does URL stand for?", ("Universal Reference Link", "Uniform Resource Locator", "Unified Routing Language", "User Resource List"), 1),
+    Question("Science", "Which organ pumps blood around the human body?", ("Liver", "Lung", "Brain", "Heart"), 3),
+)

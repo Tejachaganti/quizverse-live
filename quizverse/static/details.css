@@ -1,0 +1,7 @@
+.momentum-card{border-color:#514878;background:linear-gradient(145deg,#211d39,#151629)}
+.momentum-card h3{color:#cabbff}
+.momentum-copy{margin:10px 0 0;color:#b2b1cc;font-size:10px;line-height:1.65}
+.momentum-copy strong{color:#d4c8ff}
+.momentum-note{margin:13px 0 0;color:#aeadc8;font-size:10px;line-height:1.55}
+.momentum-log{max-width:500px;margin:0 auto 18px;color:#bdb5dd;font-size:10px;line-height:1.6}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

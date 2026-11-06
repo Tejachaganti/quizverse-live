@@ -1,0 +1,1 @@
+"""QuizVerse Live application package."""

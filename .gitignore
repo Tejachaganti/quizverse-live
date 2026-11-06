@@ -1,0 +1,51 @@
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments, bytecode, and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+htmlcov/
+
+# Local databases and generated logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Browser automation artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+
+# Local uploads and temporary documents
+uploads/
+local_uploads/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+wheelcheck/
+
+# Operating-system temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini

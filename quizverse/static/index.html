@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#090a18">
+    <meta name="description" content="QuizVerse Live — fast, friendly trivia arenas for your crew.">
+    <title>QuizVerse Live — Bring your brain trust</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/details.css">
+    <link rel="stylesheet" href="/quiz-library.css">
+  </head>
+  <body>
+    <div class="starfield" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="QuizVerse Live home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><path d="m18 2 4.1 11.9L34 18l-11.9 4.1L18 34l-4.1-11.9L2 18l11.9-4.1L18 2Z"/><circle cx="28.5" cy="7.5" r="2.3"/></svg></span>
+        <span>QUIZVERSE <span class="brand-light">LIVE</span></span>
+      </a>
+      <nav class="primary-navigation" id="primary-navigation" aria-label="Main navigation">
+        <button class="nav-link active" type="button" data-view="play" aria-current="page">Play</button>
+        <button class="nav-link" type="button" data-view="library">Quiz Library</button>
+      </nav>
+      <div class="connection-indicator" id="connection-status" role="status"><span class="status-dot"></span><span>CONNECTING</span></div>
+    </header>
+    <main id="app" class="app-shell" aria-live="polite">
+      <div class="loading-state"><span class="loader"></span><p>Opening your arena…</p></div>
+    </main>
+    <footer class="footer"><span>Good questions. Great company.</span><span>2–8 players <i aria-hidden="true">·</i> No account needed</span></footer>
+    <div id="toast" class="toast" role="status" aria-live="assertive"></div>
+    <script src="/quiz-library.js" defer></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

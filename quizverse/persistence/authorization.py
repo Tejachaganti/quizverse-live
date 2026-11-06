@@ -1,0 +1,355 @@
+"""Authorization-aware quiz access and answer-safe projections for Stage 3 callers.
+
+This module deliberately exposes no HTTP routes and never returns SQLAlchemy ORM
+objects. Future API handlers should depend on ``QuizAccessService`` projections,
+not call ``QuizRepository.get`` directly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable
+
+from quizverse.persistence.capabilities import (
+    CapabilityScope,
+    CapabilityService,
+    IssuedCapability,
+)
+from quizverse.persistence.db import Database
+from quizverse.persistence.models import Quiz
+from quizverse.persistence.repositories import (
+    QuestionRecord,
+    QuizRecord,
+    QuizRepository,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PlayerQuestionView:
+    """A playable question without its answer key or explanation."""
+
+    id: str
+    position: int
+    prompt: str
+    options: tuple[str, str, str, str]
+    category: str
+    difficulty: str
+    time_limit_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class PlayerQuizView:
+    """Published quiz fields safe for a player-facing response."""
+
+    id: str
+    title: str
+    description: str | None
+    category: str
+    difficulty: str
+    default_time_limit_seconds: int
+    questions: tuple[PlayerQuestionView, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorQuestionView:
+    """Question detail available only through owner or explicit edit access."""
+
+    id: str
+    position: int
+    prompt: str
+    options: tuple[str, str, str, str]
+    correct_option_index: int
+    explanation: str | None
+    category: str | None
+    difficulty: str | None
+    time_limit_seconds: int | None
+    provenance: str
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorQuizView:
+    """Owner/editor projection, including answer keys for quiz authoring."""
+
+    id: str
+    title: str
+    description: str | None
+    category: str
+    difficulty: str
+    visibility: str
+    status: str
+    default_time_limit_seconds: int
+    provenance: str
+    version: int
+    questions: tuple[AuthorQuestionView, ...]
+
+
+def _player_projection(quiz: Quiz) -> PlayerQuizView:
+    return PlayerQuizView(
+        id=quiz.id,
+        title=quiz.title,
+        description=quiz.description,
+        category=quiz.category,
+        difficulty=quiz.difficulty,
+        default_time_limit_seconds=quiz.default_time_limit_seconds,
+        questions=tuple(
+            PlayerQuestionView(
+                id=question.id,
+                position=question.position,
+                prompt=question.prompt,
+                options=(question.option_a, question.option_b, question.option_c, question.option_d),
+                category=question.category or quiz.category,
+                difficulty=question.difficulty or quiz.difficulty,
+                time_limit_seconds=question.time_limit_seconds or quiz.default_time_limit_seconds,
+            )
+            for question in quiz.questions
+        ),
+    )
+
+
+def _author_projection(quiz: Quiz) -> AuthorQuizView:
+    return AuthorQuizView(
+        id=quiz.id,
+        title=quiz.title,
+        description=quiz.description,
+        category=quiz.category,
+        difficulty=quiz.difficulty,
+        visibility=quiz.visibility,
+        status=quiz.status,
+        default_time_limit_seconds=quiz.default_time_limit_seconds,
+        provenance=quiz.provenance,
+        version=quiz.version,
+        questions=tuple(
+            AuthorQuestionView(
+                id=question.id,
+                position=question.position,
+                prompt=question.prompt,
+                options=(question.option_a, question.option_b, question.option_c, question.option_d),
+                correct_option_index=question.correct_option_index,
+                explanation=question.explanation,
+                category=question.category,
+                difficulty=question.difficulty,
+                time_limit_seconds=question.time_limit_seconds,
+                provenance=question.provenance,
+            )
+            for question in quiz.questions
+        ),
+    )
+
+
+class QuizAccessService:
+    """Resolve owner, editor, and player access before serializing quiz records."""
+
+    def __init__(self, database: Database) -> None:
+        self._capabilities = CapabilityService(database)
+        self._quizzes = QuizRepository(database)
+
+    def create_owner_capability(self) -> IssuedCapability:
+        """Bootstrap an account-free quiz owner identity; token is returned once."""
+        return self._capabilities.create_owner()
+
+    def create_quiz(
+        self,
+        owner_token: str,
+        quiz: QuizRecord,
+        questions: Iterable[QuestionRecord],
+        *,
+        ai_generated: bool = False,
+    ) -> AuthorQuizView | None:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return None
+        if ai_generated:
+            quiz = QuizRecord(
+                title=quiz.title, description=quiz.description, category=quiz.category,
+                difficulty=quiz.difficulty, visibility=quiz.visibility, status="draft",
+                default_time_limit_seconds=quiz.default_time_limit_seconds, provenance="ai_assisted",
+            )
+            questions = (
+                QuestionRecord(
+                    prompt=item.prompt, options=item.options, correct_option_index=item.correct_option_index,
+                    explanation=item.explanation, category=item.category, difficulty=item.difficulty,
+                    time_limit_seconds=item.time_limit_seconds, provenance="ai_assisted",
+                )
+                for item in questions
+            )
+        created = self._quizzes.create_with_questions(owner_id, quiz, questions)
+        return _author_projection(created)
+
+    def update_quiz(
+        self,
+        owner_token: str,
+        quiz_id: str,
+        *,
+        expected_version: int,
+        changes: dict[str, object],
+        questions: Iterable[QuestionRecord] | None = None,
+    ) -> AuthorQuizView | None:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return None
+        updated = self._quizzes.update_with_questions(
+            owner_id,
+            quiz_id,
+            expected_version=expected_version,
+            changes=changes,
+            questions=questions,
+        )
+        return _author_projection(updated) if updated is not None else None
+
+    def set_quiz_published(
+        self, owner_token: str, quiz_id: str, *, published: bool
+    ) -> AuthorQuizView | None:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return None
+        quiz = self._quizzes.set_published(owner_id, quiz_id, published=published)
+        return _author_projection(quiz) if quiz is not None else None
+
+    def delete_quiz(self, owner_token: str, quiz_id: str) -> bool:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return False
+        return self._quizzes.soft_delete(owner_id, quiz_id)
+
+    def duplicate_public_quiz(self, owner_token: str, source_quiz_id: str) -> AuthorQuizView | None:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return None
+        source = self._quizzes.get(source_quiz_id)
+        if source is None or source.status != "published" or source.visibility != "public":
+            return None
+        attribution = f"Duplicated from public quiz {source.id} — {source.title}."
+        description = attribution
+        if source.description:
+            description += f"\n\n{source.description}"
+        description = description[:500]
+        duplicate = self._quizzes.create_with_questions(
+            owner_id,
+            QuizRecord(
+                title=f"{source.title[:93].rstrip()} (copy)",
+                description=description,
+                category=source.category,
+                difficulty=source.difficulty,
+                visibility="private",
+                status="draft",
+                default_time_limit_seconds=source.default_time_limit_seconds,
+                provenance="user_authored",
+            ),
+            [
+                QuestionRecord(
+                    prompt=question.prompt,
+                    options=(question.option_a, question.option_b, question.option_c, question.option_d),
+                    correct_option_index=question.correct_option_index,
+                    explanation=question.explanation,
+                    category=question.category,
+                    difficulty=question.difficulty,
+                    time_limit_seconds=question.time_limit_seconds,
+                    provenance="user_authored",
+                )
+                for question in source.questions
+            ],
+        )
+        return _author_projection(duplicate)
+
+    def list_public_quizzes(
+        self,
+        *,
+        category: str | None = None,
+        difficulty: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+    ) -> tuple[PlayerQuizView, ...]:
+        quizzes = self._quizzes.list_public_published(
+            category=category, difficulty=difficulty, search=search, limit=limit
+        )
+        return tuple(_player_projection(quiz) for quiz in quizzes)
+
+    def list_owned_quizzes(self, owner_token: str) -> tuple[AuthorQuizView, ...] | None:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return None
+        return tuple(_author_projection(quiz) for quiz in self._quizzes.list_owned(owner_id))
+
+    def create_share(
+        self,
+        owner_token: str,
+        quiz_id: str,
+        *,
+        editable: bool = False,
+        expires_in_seconds: int | None = None,
+    ) -> IssuedCapability | None:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        quiz = self._quizzes.get(quiz_id) if owner_id is not None else None
+        if quiz is None or quiz.owner_id != owner_id:
+            return None
+        return self._capabilities.issue_share(
+            owner_token,
+            quiz_id,
+            editable=editable,
+            expires_in_seconds=expires_in_seconds,
+        )
+
+    def revoke_share(self, owner_token: str, quiz_id: str, grant_id: str) -> bool:
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        quiz = self._quizzes.get(quiz_id) if owner_id is not None else None
+        if quiz is None or quiz.owner_id != owner_id:
+            return False
+        return self._capabilities.revoke(owner_token, grant_id, quiz_id=quiz_id)
+
+    def get_owned_quiz(self, owner_token: str, quiz_id: str) -> AuthorQuizView | None:
+        """Return authoring details only when the caller owns this quiz."""
+        owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            return None
+        quiz = self._quizzes.get(quiz_id)
+        if quiz is None or quiz.owner_id != owner_id:
+            return None
+        return _author_projection(quiz)
+
+    def get_editable_quiz(self, capability: str, quiz_id: str) -> AuthorQuizView | None:
+        """Return authoring details to the owner or a quiz-specific edit grant."""
+        owner_id = self._capabilities.validate(capability, scope=CapabilityScope.OWNER)
+        if owner_id is None:
+            owner_id = self._capabilities.validate(
+                capability, scope=CapabilityScope.QUIZ_EDIT, quiz_id=quiz_id
+            )
+        if owner_id is None:
+            return None
+        quiz = self._quizzes.get(quiz_id)
+        if quiz is None or quiz.owner_id != owner_id:
+            return None
+        return _author_projection(quiz)
+
+    def get_playable_quiz(
+        self,
+        quiz_id: str,
+        *,
+        share_capability: str | None = None,
+    ) -> PlayerQuizView | None:
+        """Return published public quizzes or private quizzes with a matching read grant.
+
+        Owner capabilities do not substitute for a player share capability. Drafts
+        are never playable through this method, regardless of a forged/stale grant.
+        """
+        quiz = self._quizzes.get(quiz_id)
+        if quiz is None or quiz.status != "published" or quiz.visibility not in {"public", "private"}:
+            return None
+        if quiz.visibility == "private":
+            if share_capability is None:
+                return None
+            shared_owner_id = self._capabilities.validate(
+                share_capability, scope=CapabilityScope.QUIZ_READ, quiz_id=quiz_id
+            )
+            if shared_owner_id is None or shared_owner_id != quiz.owner_id:
+                return None
+        return _player_projection(quiz)
+
+    def get_authorized_quiz(
+        self, quiz_id: str, *, capability: str | None = None
+    ) -> AuthorQuizView | PlayerQuizView | None:
+        """Resolve owner responses separately from safe public/share player reads."""
+        if capability is not None:
+            owned = self.get_owned_quiz(capability, quiz_id)
+            if owned is not None:
+                return owned
+        return self.get_playable_quiz(quiz_id, share_capability=capability)
