@@ -232,6 +232,8 @@ def run_browser_sessions(origin: str) -> None:
         run_team_battle(browser, origin)
         run_elimination(browser, origin)
         run_solo_practice(browser, origin)
+        run_quiz_royale(browser, origin)
+        run_power_play(browser, origin)
 
         desktop.close()
         mobile.close()
@@ -569,6 +571,149 @@ def run_solo_practice(browser, origin: str) -> None:
         print("PASS: Solo Practice replay started a complete second match with the same player identity; return-to-lobby reset the score")
     finally:
         context.close()
+
+
+def run_quiz_royale(browser, origin: str) -> None:
+    contexts = [browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=mobile, has_touch=mobile) for size, mobile in [((1280, 850), False), ((820, 1024), False), ((390, 844), True), ((430, 932), True)]]
+    pages = [context.new_page() for context in contexts]
+    states: list[list[dict]] = [[] for _ in pages]
+    host, *guests = pages
+    try:
+        for page, captured in zip(pages, states):
+            page.set_default_timeout(7000)
+            page.on("websocket", lambda ws, target=captured: ws.on("framereceived", lambda payload: capture_state(target, payload)))
+            page.goto(origin, wait_until="domcontentloaded")
+        host.locator("#player-name").fill("Royale Host")
+        host.locator("#game-mode").select_option("quiz_royale")
+        expect(host.locator("#match-count")).to_have_value("15")
+        host.locator('[data-action="create"]').click()
+        code = host.locator(".room-code").inner_text()
+        for index, page in enumerate(guests, start=1):
+            page.locator("#player-name").fill(f"Royale {index}")
+            page.locator('[data-action="join"]').click()
+            page.locator("#room-code").fill(code)
+            page.locator('[data-action="confirm-join"]').click()
+        expect(host.locator(".player-row")).to_have_count(4)
+        expect(host.locator(".capacity")).to_contain_text("4 / 20")
+        expect(host.locator("[data-action='start']")).to_be_enabled()
+        host.locator('[data-action="start"]').click()
+        for page in pages:
+            expect(page.locator(".answer-button").first).to_be_visible(timeout=7000)
+            expect(page.locator(".remaining-count")).to_contain_text("4 still in")
+            assert_no_horizontal_overflow(page)
+        initial = [next(item for item in reversed(captured) if item.get("phase") == "question") for captured in states]
+        assert all(item["mode"] == "quiz_royale" and item["question_seconds"] == 12 and item["total_rounds"] == 15 for item in initial)
+        assert len({item["deadline"] for item in initial}) == 1
+        assert all(player["lives"] == 3 for player in initial[0]["players"])
+
+        # Reconnect while the same round is open and confirm both its question and deadline survive.
+        prompt = host.locator(".question-text").inner_text()
+        guest = guests[0]
+        guest.reload(wait_until="domcontentloaded")
+        expect(guest.locator(".answer-button").first).to_be_visible(timeout=7000)
+        assert guest.locator(".question-text").inner_text() == prompt
+        reconnected = next(item for item in reversed(states[1]) if item.get("phase") == "question")
+        assert reconnected["deadline"] == initial[1]["deadline"]
+
+        previous = ""
+        for round_index in range(3):
+            if round_index:
+                for page in pages:
+                    wait_for_next_question(page, previous)
+                previous = host.locator(".question-text").inner_text()
+            else:
+                previous = prompt
+            correct = next(question.answer for question in QUESTIONS if question.prompt == previous)
+            host.locator(f'.answer-button[data-choice="{correct}"]').click()
+            for page in guests:
+                page.locator(f'.answer-button[data-choice="{(correct + 1) % 4}"]').click()
+            for page in pages:
+                expect(page.locator(".reveal-banner")).to_be_visible(timeout=5000)
+        expect(host.locator(".results-card")).to_be_visible(timeout=6000)
+        result = next(item for item in reversed(states[0]) if item.get("phase") == "results")
+        assert result["results"]["end_reason"] == "one_survivor"
+        assert result["remaining_players"] == 1
+        assert len(result["results"]["leaderboard"]) == 4
+        host.locator('[data-action="rematch"]').click()
+        expect(host.locator("[data-action='start']")).to_be_enabled(timeout=5000)
+        lobby = next(item for item in reversed(states[0]) if item.get("phase") == "waiting")
+        assert all(player["lives"] == 3 for player in lobby["players"])
+        host.locator('[data-action="start"]').click()
+        expect(host.locator(".answer-button").first).to_be_visible(timeout=7000)
+        assert_no_horizontal_overflow(guests[1])
+        print("PASS: four desktop/tablet/mobile players completed Quiz Royale; verified 20-player capacity display, shared 12-second question, 3 lives, reconnect sequence continuity, last-survivor result, and rematch reset")
+    finally:
+        for context in contexts:
+            context.close()
+
+
+def run_power_play(browser, origin: str) -> None:
+    host_context = browser.new_context(viewport={"width": 1280, "height": 850})
+    guest_context = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+    host, guest = host_context.new_page(), guest_context.new_page()
+    states: list[list[dict]] = [[], []]
+    for page, captured in ((host, states[0]), (guest, states[1])):
+        page.set_default_timeout(7000)
+        page.on("websocket", lambda ws, target=captured: ws.on("framereceived", lambda payload: capture_state(target, payload)))
+    try:
+        host.goto(origin, wait_until="domcontentloaded")
+        guest.goto(origin, wait_until="domcontentloaded")
+        host.locator("#player-name").fill("Power Host")
+        host.locator("#game-mode").select_option("power_play")
+        host.locator('[data-action="create"]').click()
+        code = host.locator(".room-code").inner_text()
+        guest.locator("#player-name").fill("Power Guest")
+        guest.locator('[data-action="join"]').click()
+        guest.locator("#room-code").fill(code)
+        guest.locator('[data-action="confirm-join"]').click()
+        host.locator('[data-action="start"]').click()
+        expect(host.locator(".answer-button").first).to_be_visible(timeout=7000)
+        expect(host.locator(".ability-button")).to_have_count(3)
+        expect(guest.locator(".ability-button")).to_have_count(3)
+        first_question = host.locator(".question-text").inner_text()
+        first_correct = next(question.answer for question in QUESTIONS if question.prompt == first_question)
+        host.locator('[data-action="ability"][data-ability="fifty_fifty"]').click()
+        expect(host.locator(".answer-button")).to_have_count(2)
+        expect(guest.locator(".answer-button")).to_have_count(4)
+        assert next(item for item in reversed(states[0]) if item.get("phase") == "question")["power_play"]["energy"] == 1
+        assert next(item for item in reversed(states[1]) if item.get("phase") == "question")["power_play"]["energy"] == 3
+        host.locator(f'.answer-button[data-choice="{first_correct}"]').click()
+        guest.locator(f'.answer-button[data-choice="{first_correct}"]').click()
+        expect(host.locator(".reveal-banner")).to_be_visible(timeout=5000)
+
+        previous = first_question
+        for round_index in range(1, 10):
+            if round_index:
+                wait_for_next_question(host, previous)
+                wait_for_next_question(guest, previous)
+                previous = host.locator(".question-text").inner_text()
+            correct = next(question.answer for question in QUESTIONS if question.prompt == previous)
+            if round_index == 1:
+                host.locator('[data-action="ability"][data-ability="double_points"]').click()
+                expect(host.locator(".power-play-controls")).to_contain_text("Double Points armed")
+            elif round_index == 3:
+                host.locator('[data-action="ability"][data-ability="shield"]').click()
+                expect(host.locator(".power-play-controls")).to_contain_text("Shield active")
+                host.locator(f'.answer-button[data-choice="{(correct + 1) % 4}"]').click()
+                guest.locator(f'.answer-button[data-choice="{correct}"]').click()
+                expect(host.locator(".reveal-banner")).to_be_visible(timeout=5000)
+                feedback = next(item["answer_feedback"] for item in reversed(states[0]) if item.get("phase") == "reveal")
+                assert feedback["shield_consumed"] is True and feedback["power_penalty"] is False
+                previous = host.locator(".question-text").inner_text()
+                continue
+            host.locator(f'.answer-button[data-choice="{correct}"]').click()
+            guest.locator(f'.answer-button[data-choice="{correct}"]').click()
+            expect(host.locator(".reveal-banner")).to_be_visible(timeout=5000)
+            if round_index == 1:
+                feedback = next(item["answer_feedback"] for item in reversed(states[0]) if item.get("phase") == "reveal")
+                assert feedback["doubled"] is True
+        expect(host.locator(".results-card")).to_be_visible(timeout=7000)
+        expect(guest.locator(".final-row")).to_have_count(2)
+        assert_no_horizontal_overflow(guest)
+        print("PASS: desktop/mobile Power Play match exercised private 50:50, Double Points scoring, Shield consumption, energy snapshots, and completed all ten rounds")
+    finally:
+        host_context.close()
+        guest_context.close()
 
 
 def capture_state(states: list[dict], payload: str | bytes, tokens: list[str] | None = None) -> None:

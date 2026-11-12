@@ -58,6 +58,9 @@ class Answer:
     accepted_at: float
     speed_bonus: int = 0
     momentum_bonus: int = 0
+    doubled: bool = False
+    shield_consumed: bool = False
+    power_penalty: bool = False
 
 
 @dataclass(slots=True)
@@ -206,7 +209,7 @@ class GameEngine:
             "score": player.score,
             "correct": player.correct,
             "momentum_points": player.momentum_points,
-            "answered": player.answer is not None,
+            "answered": player.answer is not None and player.answer.choice >= 0,
             "is_host": player.id == room.host_id,
         }
         if room.match_config.mode == GameMode.TEAM_BATTLE:
@@ -227,6 +230,20 @@ class GameEngine:
             if room.match_config.royale:
                 public["lives"] = player.lives
         return public
+
+    @staticmethod
+    def _power_snapshot(room: Room, player: Player) -> dict[str, object]:
+        abilities = ("fifty_fifty", "double_points", "shield")
+        return {
+            "energy": player.power_energy,
+            "max_energy": 5,
+            "cost": 2,
+            "available": [name for name in abilities if name not in player.power_used],
+            "used": sorted(player.power_used),
+            "double_active": player.power_double_active,
+            "shield_active": player.power_shield_active,
+            "used_this_round": player.power_round_used,
+        }
 
     def _elimination_results(self, room: Room) -> tuple[list[dict[str, object]], dict[str, object]]:
         players = list(room.players.values())
@@ -484,14 +501,20 @@ class GameEngine:
         public_question = None
         if room.phase in (Phase.QUESTION, Phase.REVEAL) and question:
             public_question = {"category": question.category, "prompt": question.prompt, "options": list(question.options)}
+            if room.match_config.power_play and room.phase == Phase.QUESTION and viewer and viewer.power_fifty_round == room.round_index:
+                public_question["visible_choices"] = list(viewer.power_fifty_choices)
+                public_question["options"] = [option if index in viewer.power_fifty_choices else "" for index, option in enumerate(question.options)]
         feedback = None
         if room.phase == Phase.REVEAL and viewer and question:
             feedback = {
-                "selected": viewer.answer.choice if viewer.answer else None,
+                "selected": viewer.answer.choice if viewer.answer and viewer.answer.choice >= 0 else None,
                 "correct": question.answer,
                 "was_correct": bool(viewer.answer and viewer.answer.choice == question.answer),
                 "speed_bonus": viewer.answer.speed_bonus if viewer.answer else 0,
                 "momentum_bonus": viewer.answer.momentum_bonus if viewer.answer else 0,
+                "doubled": bool(viewer.answer and viewer.answer.doubled),
+                "shield_consumed": bool(viewer.answer and viewer.answer.shield_consumed),
+                "power_penalty": bool(viewer.answer and viewer.answer.power_penalty),
             }
         team_assignments = self._team_assignments(room)
         public_players = [
@@ -748,6 +771,7 @@ class GameEngine:
         room.question_started_at = self._monotonic() if started_at is None else started_at
         for player in room.players.values():
             player.answer = None
+            player.power_round_used = False
         leader_score = max((player.score for player in room.players.values()), default=0)
         if room.match_config.momentum_enabled:
             room.momentum_eligible_ids = {
@@ -803,6 +827,12 @@ class GameEngine:
             player.answer.speed_bonus = speed_bonus
             player.answer.momentum_bonus = momentum_bonus
             player.score += room.match_config.base_points + speed_bonus + momentum_bonus
+            if room.match_config.power_play and player.answer:
+                if player.power_double_active:
+                    player.score += room.match_config.base_points + speed_bonus
+                    player.answer.doubled = True
+                    player.power_double_active = False
+                player.power_energy = min(5, player.power_energy + 1)
             player.correct_response_time_ms += int(round(elapsed * 1000))
             if momentum_bonus:
                 player.momentum_points += momentum_bonus
@@ -815,6 +845,23 @@ class GameEngine:
                         "reason": "Eligible player answered correctly within 5 seconds.",
                     }
                 )
+        if room.match_config.power_play:
+            for player in room.players.values():
+                answer = player.answer
+                if answer is not None and answer.choice == question.answer:
+                    continue
+                if player.power_shield_active:
+                    player.power_shield_active = False
+                    if answer is None:
+                        answer = Answer(choice=-1, accepted_at=question_start)
+                        player.answer = answer
+                    answer.shield_consumed = True
+                else:
+                    if answer is None:
+                        answer = Answer(choice=-1, accepted_at=question_start)
+                        player.answer = answer
+                    player.score = max(0, player.score - 250)
+                    answer.power_penalty = True
         if room.match_config.elimination:
             survivors = [player for player in room.players.values() if not player.eliminated]
             if not survivors:
@@ -899,6 +946,8 @@ class GameEngine:
                 raise GameError("duplicate_answer", "Your answer is already locked for this round.")
             if isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice <= 3:
                 raise GameError("invalid_choice", "Choose one of the four answer options.")
+            if room.match_config.power_play and player.power_fifty_round == room.round_index and choice not in player.power_fifty_choices:
+                raise GameError("choice_hidden", "Choose one of the options still available to you.")
             player.answer = Answer(choice=choice, accepted_at=now)
             if room.match_config.mode == GameMode.SOLO_PRACTICE:
                 player.answers_submitted += 1
@@ -908,6 +957,43 @@ class GameEngine:
                 all_answered = all(not candidate.connected or candidate.answer is not None for candidate in room.players.values())
             if all_answered:
                 self._reveal(room)
+            self._touch(room)
+            return self._snapshot(room, player_id)
+
+    async def activate_ability(self, room_code: str, player_id: str, ability: str, request_id: str) -> dict[str, object]:
+        async with self._lock:
+            room, player = self._get_room_player(room_code, player_id)
+            if not room.match_config.power_play:
+                raise GameError("wrong_mode", "Abilities are available only in Power Play.")
+            if room.phase != Phase.QUESTION or room.deadline is None or self._monotonic() >= room.deadline:
+                raise GameError("ability_closed", "Abilities can only be used while a question is open.")
+            if player.answer is not None:
+                raise GameError("already_answered", "You cannot activate an ability after locking your answer.")
+            if request_id in player.power_requests:
+                raise GameError("replayed_request", "That ability request has already been used.")
+            if ability not in {"fifty_fifty", "double_points", "shield"}:
+                raise GameError("invalid_ability", "Choose an available Power Play ability.")
+            if ability in player.power_used:
+                raise GameError("ability_used", "You have already used that ability this match.")
+            if player.power_round_used:
+                raise GameError("ability_stacked", "Only one ability can be activated per question.")
+            if player.power_energy < 2:
+                raise GameError("insufficient_energy", "You need 2 energy to activate an ability.")
+            if ability == "fifty_fifty":
+                question = room.questions[room.round_index]
+                incorrect = [index for index in range(len(question.options)) if index != question.answer]
+                if len(question.options) != 4 or len(incorrect) < 2:
+                    raise GameError("ability_unavailable", "50:50 requires four answer options.")
+                player.power_fifty_round = room.round_index
+                player.power_fifty_choices = tuple(sorted([question.answer, *secrets.SystemRandom().sample(incorrect, 1)]))
+            elif ability == "double_points":
+                player.power_double_active = True
+            else:
+                player.power_shield_active = True
+            player.power_energy -= 2
+            player.power_used.add(ability)
+            player.power_requests.add(request_id)
+            player.power_round_used = True
             self._touch(room)
             return self._snapshot(room, player_id)
 

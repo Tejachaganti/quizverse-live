@@ -22,6 +22,7 @@ from quizverse.ai_generation import AIProvider, GenerationService
 from quizverse.persistence.authorization import QuizAccessService
 from quizverse.persistence.db import Database
 from quizverse.protocol import (
+    AbilityEvent,
     AnswerEvent,
     ClientEvent,
     CreateEvent,
@@ -254,7 +255,7 @@ def create_app(
                         joined = await hub.engine.create_room(
                             event.name,
                             mode=event.mode,
-                            selection=event.model_dump(exclude={"event", "name", "mode"}),
+                            selection=event.model_dump(exclude={"event", "name", "mode"}, exclude_none=True),
                         )
                         identity = (str(joined["state"]["code"]), str(joined["player_id"]))
                         await hub.attach(identity, websocket)
@@ -285,6 +286,9 @@ def create_app(
                         elif isinstance(event, AnswerEvent):
                             await hub.engine.submit_answer(code, player_id, event.choice)
                             await hub.broadcast_room(code, "answer-update")
+                        elif isinstance(event, AbilityEvent):
+                            await hub.engine.activate_ability(code, player_id, event.ability, event.request_id)
+                            await hub.broadcast_room(code, "ability-update")
                         elif isinstance(event, (RematchEvent, LobbyEvent)):
                             state = await hub.engine.snapshot(code, player_id)
                             if state["phase"] != "results":

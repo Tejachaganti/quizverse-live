@@ -65,6 +65,12 @@ class AnswerEvent(EventModel):
     choice: int = Field(ge=0, le=3)
 
 
+class AbilityEvent(EventModel):
+    event: Literal["ability"]
+    ability: Literal["fifty_fifty", "double_points", "shield"]
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class RematchEvent(EventModel):
     event: Literal["rematch"]
 
@@ -74,7 +80,7 @@ class LobbyEvent(EventModel):
 
 
 ClientEvent: TypeAlias = Annotated[
-    CreateEvent | JoinEvent | ReconnectEvent | StartEvent | AnswerEvent | RematchEvent | LobbyEvent,
+    CreateEvent | JoinEvent | ReconnectEvent | StartEvent | AnswerEvent | AbilityEvent | RematchEvent | LobbyEvent,
     Field(discriminator="event"),
 ]
 EVENT_ADAPTER = TypeAdapter(ClientEvent)

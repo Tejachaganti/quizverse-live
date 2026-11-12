@@ -14,3 +14,7 @@
 .topic-preference { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, .8fr); gap: .6rem; align-items: center; margin: .45rem 0; font-size: .86rem; }
 .match-settings select[multiple] { min-height: 8rem; }
 .competitive-settings { max-height: 26rem; overflow: auto; }
+
+.power-play-controls{display:grid;gap:.65rem;margin:1rem 0;padding:1rem;border:1px solid rgba(140,115,255,.28);border-radius:16px;background:rgba(100,75,180,.09)}.energy-line{display:flex;justify-content:space-between;gap:1rem;align-items:center;color:#d9d1ff}.ability-buttons{display:flex;gap:.5rem;flex-wrap:wrap}.ability-button{flex:1 1 125px}.life-pill{color:#ff879d;font-weight:700;padding:.25rem .5rem}.elimination-pill{font-weight:700}.power-play-controls .microcopy{margin:0}@media(max-width:540px){.ability-buttons{display:grid;grid-template-columns:1fr}.energy-line{align-items:flex-start;flex-direction:column}}
+
+.power-feedback{margin:.4rem 0;color:#d9d1ff;font-weight:650}

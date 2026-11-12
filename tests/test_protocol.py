@@ -63,6 +63,17 @@ def test_solo_practice_create_mode_is_valid() -> None:
     assert event.mode == "solo_practice"
 
 
+def test_new_modes_default_to_server_owned_round_counts_and_ability_action_is_strict():
+    royale = _parse_event('{"event":"create","name":"Nova","mode":"quiz_royale"}')
+    assert royale.question_count is None
+    ability = _parse_event('{"event":"ability","ability":"fifty_fifty","request_id":"request-123456789"}')
+    assert ability.ability == "fifty_fifty"
+    with pytest.raises(GameError):
+        _parse_event('{"event":"ability","ability":"shield","request_id":"short"}')
+    with pytest.raises(GameError):
+        _parse_event('{"event":"ability","ability":"shield","request_id":"request-123456789","energy":5}')
+
+
 def test_create_event_accepts_only_bounded_taxonomy_filters():
     event = _parse_event('{"event":"create","name":"Nova","categories":["category:science"],"difficulty":"mixed","question_count":7}')
     assert event.categories == ["category:science"]
