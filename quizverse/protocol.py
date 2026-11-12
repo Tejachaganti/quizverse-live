@@ -15,8 +15,8 @@ class EventModel(BaseModel):
 class CreateEvent(EventModel):
     event: Literal["create"]
     name: str = Field(min_length=1, max_length=18)
-    mode: Literal["classic", "speed_challenge", "team_battle", "elimination", "solo_practice"] = "classic"
-    question_count: int = Field(default=10, ge=1, le=20)
+    mode: Literal["classic", "speed_challenge", "team_battle", "elimination", "solo_practice", "quiz_royale", "power_play"] = "classic"
+    question_count: int | None = Field(default=None, ge=1, le=20)
     difficulty: Literal["easy", "medium", "hard", "mixed"] = "medium"
     language: str = Field(default="en", min_length=2, max_length=35, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
     learning_preset: Literal["little_explorers", "young_learners", "junior_champions", "teen_challenge", "college_arena", "expert_arena"] = "teen_challenge"

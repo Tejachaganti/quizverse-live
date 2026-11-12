@@ -13,6 +13,8 @@ class GameMode(StrEnum):
     TEAM_BATTLE = "team_battle"
     ELIMINATION = "elimination"
     SOLO_PRACTICE = "solo_practice"
+    QUIZ_ROYALE = "quiz_royale"
+    POWER_PLAY = "power_play"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +36,13 @@ class ModeConfig:
     momentum_bonus_points: int
     even_player_count: bool = False
     elimination: bool = False
+    royale: bool = False
+    power_play: bool = False
+    starting_lives: int = 0
 
     def __post_init__(self) -> None:
-        if not 1 <= self.min_players <= self.max_players <= 8:
-            raise ValueError("Mode player limits must be between 1 and 8.")
+        if not 1 <= self.min_players <= self.max_players <= (20 if self.royale else 8):
+            raise ValueError("Mode player limits exceed this mode's supported roster size.")
         if self.question_count < 1:
             raise ValueError("A mode needs at least one question.")
         if min(self.countdown_seconds, self.question_seconds, self.reveal_seconds) <= 0:
@@ -130,6 +135,22 @@ SOLO_PRACTICE_CONFIG = ModeConfig(
     momentum_bonus_points=0,
 )
 
+QUIZ_ROYALE_CONFIG = ModeConfig(
+    mode=GameMode.QUIZ_ROYALE, min_players=4, max_players=20, question_count=15,
+    countdown_seconds=3.0, question_seconds=12.0, reveal_seconds=3.0,
+    base_points=1000, speed_bonus_max=500, momentum_enabled=False,
+    momentum_gap_points=0, momentum_speed_seconds=0.0, momentum_bonus_points=0,
+    elimination=True, royale=True, starting_lives=3,
+)
+
+POWER_PLAY_CONFIG = ModeConfig(
+    mode=GameMode.POWER_PLAY, min_players=2, max_players=8, question_count=10,
+    countdown_seconds=3.0, question_seconds=15.0, reveal_seconds=3.0,
+    base_points=1000, speed_bonus_max=500, momentum_enabled=False,
+    momentum_gap_points=0, momentum_speed_seconds=0.0, momentum_bonus_points=0,
+    power_play=True,
+)
+
 _SUPPORTED_MODES = MappingProxyType(
     {
         GameMode.CLASSIC: CLASSIC_CONFIG,
@@ -137,6 +158,8 @@ _SUPPORTED_MODES = MappingProxyType(
         GameMode.TEAM_BATTLE: TEAM_BATTLE_CONFIG,
         GameMode.ELIMINATION: ELIMINATION_CONFIG,
         GameMode.SOLO_PRACTICE: SOLO_PRACTICE_CONFIG,
+        GameMode.QUIZ_ROYALE: QUIZ_ROYALE_CONFIG,
+        GameMode.POWER_PLAY: POWER_PLAY_CONFIG,
     }
 )
 

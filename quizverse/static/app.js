@@ -163,6 +163,7 @@
     eliminationOption.value = 'elimination';
     eliminationOption.textContent = 'Elimination - survive each round';
     select.append(eliminationOption);
+    for (const [value, label] of [['quiz_royale','Quiz Royale - 4-20 players - 3 lives'],['power_play','Power Play - abilities and energy']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); }
     const soloOption = document.createElement('option');
     soloOption.value = 'solo_practice';
     soloOption.textContent = 'Solo Practice - just you';
@@ -170,7 +171,12 @@
     select.value = state.selectedMode;
     const updateSelection = () => {
       state.selectedMode = select.value;
-      picker.querySelector('#mode-description').textContent = select.value === 'speed_challenge'
+      const rounds = picker.querySelector('#match-count');
+      if (rounds && !rounds.dataset.customized) rounds.value = select.value === 'quiz_royale' ? '15' : '10';
+      picker.querySelector('#mode-description').textContent = select.value === 'quiz_royale'
+        ? 'Quiz Royale: four to twenty players start with three lives. Wrong or unanswered rounds cost one life.'
+        : select.value === 'power_play' ? 'Power Play: privately spend energy on 50:50, Double Points, or Shield.'
+        : select.value === 'speed_challenge'
         ? 'Speed Challenge: 1,000 points plus up to 500 speed points scaled to 10 seconds. Momentum Shift is off.'
         : select.value === 'elimination'
           ? 'Elimination: wrong or unanswered means out. Survive all 10 rounds or be the last player standing.'
@@ -195,6 +201,7 @@
         : 'No account. No downloads. Just a code and a little friendly rivalry.';
     };
     select.addEventListener('change', updateSelection);
+    picker.querySelector('#match-count').addEventListener('input', event => { event.target.dataset.customized = 'true'; });
     picker.querySelector('#player-preset').value = state.preferences.learning_preset;
     picker.querySelector('#player-difficulty').value = state.preferences.difficulty;
     const playerLanguage = document.createElement('label');
@@ -222,7 +229,9 @@
     if (!room) return;
     const speedMode = room.mode === 'speed_challenge';
     const teamMode = room.mode === 'team_battle';
-    const eliminationMode = room.mode === 'elimination';
+    const royaleMode = room.mode === 'quiz_royale';
+    const powerPlayMode = room.mode === 'power_play';
+    const eliminationMode = room.mode === 'elimination' || royaleMode;
     const soloMode = room.mode === 'solo_practice';
     const timeRow = [...app.querySelectorAll('.side-stack .rule-line')]
       .find(row => row.querySelector('span')?.textContent === 'Answer time');
@@ -235,7 +244,7 @@
       formatCard.querySelector('h3')?.after(modeRow);
     }
     const modeRow = app.querySelector('.side-stack .mode-line strong');
-    if (modeRow) modeRow.textContent = speedMode ? 'Speed Challenge' : teamMode ? 'Team Battle' : eliminationMode ? 'Elimination' : soloMode ? 'Solo Practice' : 'Classic';
+    if (modeRow) modeRow.textContent = royaleMode ? 'Quiz Royale' : powerPlayMode ? 'Power Play' : speedMode ? 'Speed Challenge' : teamMode ? 'Team Battle' : eliminationMode ? 'Elimination' : soloMode ? 'Solo Practice' : 'Classic';
     const momentumCard = app.querySelector('.momentum-card');
     if (momentumCard) momentumCard.hidden = !room.momentum?.enabled;
     const momentumNote = app.querySelector('.momentum-note');
@@ -269,9 +278,9 @@
     if (eliminationMode) {
       const playerRule = [...app.querySelectorAll('.side-stack .rule-line')]
         .find(row => row.querySelector('span')?.textContent === 'Players');
-      if (playerRule) playerRule.querySelector('strong').textContent = '2-8';
+      if (playerRule) playerRule.querySelector('strong').textContent = royaleMode ? '4-20' : '2-8';
       const roomNote = app.querySelector('.room-note');
-      if (roomNote) roomNote.textContent = 'Wrong or unanswered answers eliminate a player at reveal. Disconnected players can reconnect until the question deadline.';
+      if (roomNote) roomNote.textContent = royaleMode ? 'Wrong or unanswered answers cost one of three lives. Last remaining player wins.' : 'Wrong or unanswered answers eliminate a player at reveal. Disconnected players can reconnect until the question deadline.';
       const startNote = app.querySelector('[data-action="start"]')?.nextElementSibling;
       if (startNote) startNote.textContent = room.can_start ? 'Answer correctly each round to stay in the arena.' : (room.can_start_reason || 'At least two connected players are needed to start.');
       const count = app.querySelector('.remaining-count');
@@ -289,7 +298,7 @@
         if (!player || row.querySelector('.elimination-pill')) continue;
         const badge = document.createElement('span');
         badge.className = `elimination-pill ${player.eliminated ? 'is-out' : 'is-alive'}`;
-        badge.textContent = player.eliminated ? `OUT - ${player.elimination_reason || 'eliminated'}` : 'IN';
+        badge.textContent = player.eliminated ? `OUT - ${player.elimination_reason || 'eliminated'}` : royaleMode ? `♥ ${player.lives} lives` : 'IN';
         (row.querySelector('.player-info, .leader-name') || row).after(badge);
       }
       const current = room.players.find(player => player.id === state.playerId);
@@ -299,7 +308,7 @@
       }
       const revealBanner = app.querySelector('.reveal-banner');
       if (revealBanner && current?.eliminated) revealBanner.textContent = current.elimination_reason === 'timeout' ? 'Time ran out. You are eliminated; watch the remaining players.' : 'That answer was incorrect. You are eliminated; watch the remaining players.';
-      if (room.phase === 'results' && room.results) renderEliminationResults(room.results);
+      if (room.phase === 'results' && room.results) renderEliminationResults(room.results, royaleMode, room.total_rounds);
     }
     if (soloMode) {
       const codeRow = app.querySelector('.room-code-row');
@@ -374,7 +383,7 @@
       actions.before(result);
     }
   }
-  function renderEliminationResults(results) {
+  function renderEliminationResults(results, royaleMode = false, totalRounds = 10) {
     const rows = results.leaderboard || [];
     const winningId = (results.winning_player_ids || [])[0];
     const winner = rows.find(player => player.id === winningId);
@@ -387,14 +396,14 @@
       ? 'Last player standing.'
       : results.end_reason === 'all_eliminated'
         ? 'Everyone left in the arena went out together. They share the final placement.'
-        : 'Ten rounds complete. Survivors rank by points, correct answers, and correct response time.';
+        : `${totalRounds} rounds complete. ${royaleMode ? 'Survivors rank by lives, then points and correct answers.' : 'Survivors rank by points, correct answers, and correct response time.'}`;
     const podium = app.querySelector('.podium');
     if (podium) podium.hidden = true;
     const list = app.querySelector('.final-list');
     if (list) list.innerHTML = rows.map(player => {
       const suffix = player.placement === 1 ? 'st' : player.placement === 2 ? 'nd' : player.placement === 3 ? 'rd' : 'th';
       const place = `${player.shared_placement ? 'Shared ' : ''}${player.placement}${suffix}`;
-      const status = player.eliminated ? `Out in round ${player.eliminated_round} (${player.elimination_reason})` : 'Survived';
+      const status = player.eliminated ? `Out in round ${player.eliminated_round} (${player.elimination_reason})` : royaleMode ? `Survived with ${player.lives} lives` : 'Survived';
       return `<div class="final-row elimination-final-row"><span class="rank ${player.placement === 1 ? 'gold' : player.placement === 2 ? 'silver' : player.placement === 3 ? 'bronze' : ''}">${place}</span><span class="leader-name">${escapeHtml(player.name)}</span><span class="final-stat">${status} Â· ${player.correct} correct Â· ${Number(player.correct_response_time_ms).toLocaleString()} ms</span><strong class="leader-score">${Number(player.score).toLocaleString()}</strong></div>`;
     }).join('');
     const log = app.querySelector('.momentum-log');
@@ -458,7 +467,7 @@
     const categoryNames = (filters.categories || []).map(id => state.categories.find(c=>c.id===id)?.display_name || id);
     const examName = state.examCollections.find(x=>x.id===filters.exam_collection_id)?.display_name || (filters.exam_collection_id ? filters.exam_collection_id : 'Any');
     const filterSummary = `<section class="rules-card"><h3>Shared question filters</h3><div class="rule-line"><span>Content</span><strong>${filters.content_scope === 'public_library' ? 'Published public library' : filters.content_scope === 'selected_quizzes' ? 'Selected quizzes' : 'Built-in bank'}</strong></div><div class="rule-line"><span>Difficulty</span><strong>${escapeHtml(filters.difficulty || 'Medium')}</strong></div><div class="rule-line"><span>Suitability</span><strong>${escapeHtml((filters.learning_preset || 'teen_challenge').replaceAll('_',' '))}</strong></div><div class="rule-line"><span>Language</span><strong>${escapeHtml(filters.language || 'en')}</strong></div><div class="rule-line"><span>Exam collection</span><strong>${escapeHtml(examName)}</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count} rounds</strong></div><div class="rule-line"><span>Topics</span><strong>${escapeHtml(categoryNames.length ? categoryNames.join(', ') : 'All eligible')}</strong></div><p class="microcopy">Everyone receives the same validated question sequence.</p></section>`;
-    return `<section class="room-layout"><div class="room-card"><button class="back-button" type="button" data-action="leave">← &nbsp;Leave arena</button><div class="section-kicker">YOUR PRIVATE GAME ROOM</div><h2>Gather your people.</h2><div class="room-code-row"><div class="room-code" aria-label="Room code ${escapeHtml(room.code)}">${escapeHtml(room.code)}</div><button class="btn btn-secondary" type="button" data-action="copy">▣ &nbsp;Copy code</button></div><p class="room-note">Share this code with your crew. Once two players are here, the host can launch the quiz.</p><div class="crew-heading"><h3>The crew</h3><span class="capacity">${room.players.length} / 8 players</span></div><div class="player-list" aria-live="polite">${room.players.map(playerRow).join('')}</div>${host ? `<button class="btn btn-primary btn-full" type="button" data-action="start" ${room.can_start ? '' : 'disabled'}>Launch the quiz &nbsp;✦</button><p class="microcopy">${room.can_start ? 'Everyone ready? Let the brain battle begin.' : 'Waiting for at least one more connected player.'}</p>` : `<div class="waiting-note"><span class="pulse-dot"></span>Waiting for ${escapeHtml(hostName)} to launch…</div>`}</div><aside class="side-stack">${filterSummary}<section class="rules-card"><h3>Tonight's format</h3><div class="rule-line"><span>Players</span><strong>2–8</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count || 10} rounds</strong></div><div class="rule-line"><span>Answer time</span><strong>15 seconds</strong></div></section><section class="rules-card"><h3>How scoring works</h3><div class="rule-line"><span>Correct answer</span><strong>1,000 pts</strong></div><div class="rule-line"><span>Speed bonus</span><strong>Up to 500</strong></div><p class="microcopy">The server records answer time. Faster correct answers earn a bigger bonus.</p></section><section class="rules-card momentum-card"><h3>Momentum Shift</h3><p class="momentum-copy">At the start of a round, players trailing the leader by 1–1,500 points qualify. A correct answer in the first 5 seconds earns a published <strong>+250 points</strong>. Nobody loses points.</p></section></aside></section>`;
+    return `<section class="room-layout"><div class="room-card"><button class="back-button" type="button" data-action="leave">← &nbsp;Leave arena</button><div class="section-kicker">YOUR PRIVATE GAME ROOM</div><h2>Gather your people.</h2><div class="room-code-row"><div class="room-code" aria-label="Room code ${escapeHtml(room.code)}">${escapeHtml(room.code)}</div><button class="btn btn-secondary" type="button" data-action="copy">▣ &nbsp;Copy code</button></div><p class="room-note">Share this code with your crew. Once two players are here, the host can launch the quiz.</p><div class="crew-heading"><h3>The crew</h3><span class="capacity">${room.players.length} / ${room.max_players || 8} players</span></div><div class="player-list" aria-live="polite">${room.players.map(playerRow).join('')}</div>${host ? `<button class="btn btn-primary btn-full" type="button" data-action="start" ${room.can_start ? '' : 'disabled'}>Launch the quiz &nbsp;✦</button><p class="microcopy">${room.can_start ? 'Everyone ready? Let the brain battle begin.' : 'Waiting for at least one more connected player.'}</p>` : `<div class="waiting-note"><span class="pulse-dot"></span>Waiting for ${escapeHtml(hostName)} to launch…</div>`}</div><aside class="side-stack">${filterSummary}<section class="rules-card"><h3>Tonight's format</h3><div class="rule-line"><span>Players</span><strong>2–8</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count || 10} rounds</strong></div><div class="rule-line"><span>Answer time</span><strong>15 seconds</strong></div></section><section class="rules-card"><h3>How scoring works</h3><div class="rule-line"><span>Correct answer</span><strong>1,000 pts</strong></div><div class="rule-line"><span>Speed bonus</span><strong>Up to 500</strong></div><p class="microcopy">The server records answer time. Faster correct answers earn a bigger bonus.</p></section><section class="rules-card momentum-card"><h3>Momentum Shift</h3><p class="momentum-copy">At the start of a round, players trailing the leader by 1–1,500 points qualify. A correct answer in the first 5 seconds earns a published <strong>+250 points</strong>. Nobody loses points.</p></section></aside></section>`;
   }
   function game() {
     const room = state.room;

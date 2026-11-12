@@ -78,6 +78,15 @@ class Player:
     eliminated: bool = False
     eliminated_round: int | None = None
     elimination_reason: str | None = None
+    lives: int = 0
+    power_energy: int = 0
+    power_used: set[str] = field(default_factory=set)
+    power_requests: set[str] = field(default_factory=set)
+    power_double_active: bool = False
+    power_shield_active: bool = False
+    power_fifty_round: int | None = None
+    power_fifty_choices: tuple[int, ...] = ()
+    power_round_used: bool = False
 
 
 @dataclass(slots=True)
@@ -215,6 +224,8 @@ class GameEngine:
                 if player.eliminated_round is not None
                 else room.round_index + (1 if room.phase == Phase.RESULTS else 0)
             )
+            if room.match_config.royale:
+                public["lives"] = player.lives
         return public
 
     def _elimination_results(self, room: Room) -> tuple[list[dict[str, object]], dict[str, object]]:
@@ -227,9 +238,15 @@ class GameEngine:
         }
 
         def metrics(player: Player) -> tuple[int, int, int]:
+            if room.match_config.royale:
+                return player.lives, player.score, player.correct
             return player.score, player.correct, player.correct_response_time_ms
 
         def sort_key(player: Player) -> tuple[object, ...]:
+            if room.match_config.royale:
+                if terminal_ids:
+                    return (0, player.name.casefold()) if player.id in terminal_ids else (1, -player.lives, -player.score, -player.correct, player.name.casefold())
+                return (0, -player.lives, -player.score, -player.correct, player.name.casefold()) if not player.eliminated else (1, -(player.eliminated_round or 0), -player.lives, -player.score, player.name.casefold())
             if terminal_ids:
                 if player.id in terminal_ids:
                     return (0, 0, 0, 0, 0, player.name.casefold())
@@ -438,6 +455,8 @@ class GameEngine:
         return True
 
     def _can_start_reason(self, room: Room) -> str | None:
+        if room.match_config.royale and sum(player.connected for player in room.players.values()) < 4:
+            return "Quiz Royale needs at least four connected players."
         if room.match_config.mode == GameMode.SOLO_PRACTICE and (len(room.players) != 1 or not any(player.connected for player in room.players.values())):
             return "Solo Practice needs exactly one connected player."
         if room.match_config.mode == GameMode.TEAM_BATTLE:
@@ -527,7 +546,9 @@ class GameEngine:
             "question": public_question,
             "deadline": room.deadline_epoch_ms,
             "server_now": int(self._wall_time() * 1000),
-            "answered": bool(viewer and viewer.answer is not None),
+            "answered": bool(viewer and viewer.answer is not None and viewer.answer.choice >= 0),
+            **({"max_players": room.match_config.max_players} if room.match_config.royale else {}),
+            **({"power_play": self._power_snapshot(room, viewer)} if room.match_config.power_play and viewer else {}),
             "answer_feedback": feedback,
             "momentum": {
                 "enabled": room.match_config.momentum_enabled,
@@ -562,6 +583,8 @@ class GameEngine:
             token = secrets.token_urlsafe(32)
             chosen = dict(selection or {})
             question_count = chosen.get("question_count", match_config.question_count)
+            if question_count is None:
+                question_count = match_config.question_count
             if isinstance(question_count, bool) or not isinstance(question_count, int) or not 1 <= question_count <= 20:
                 raise GameError("invalid_question_count", "Question count must be between 1 and 20.")
             configured = match_config if question_count == match_config.question_count else replace(match_config, question_count=question_count)
@@ -649,7 +672,8 @@ class GameEngine:
                 if sum(player.connected for player in room.players.values()) < room.match_config.min_players:
                     raise GameError("not_enough_players", "At least four players must be connected to start Team Battle.")
             elif sum(player.connected for player in room.players.values()) < room.match_config.min_players:
-                raise GameError("not_enough_players", "At least two connected players are needed to start.")
+                message = "At least four connected players are needed to start Quiz Royale." if room.match_config.royale else "At least two connected players are needed to start."
+                raise GameError("not_enough_players", message)
             if room.match_config.mode == GameMode.TEAM_BATTLE:
                 roster = tuple(room.players)
                 if roster != room.team_assignment_roster or any(player.team_id not in TEAM_NAMES for player in room.players.values()):
@@ -701,6 +725,15 @@ class GameEngine:
                 player.eliminated_round = None
                 player.elimination_reason = None
                 player.answer = None
+                player.lives = room.match_config.starting_lives
+                player.power_energy = 3 if room.match_config.power_play else 0
+                player.power_used.clear()
+                player.power_requests.clear()
+                player.power_double_active = False
+                player.power_shield_active = False
+                player.power_fifty_round = None
+                player.power_fifty_choices = ()
+                player.power_round_used = False
             room.momentum_eligible_ids.clear()
             room.momentum_adjustments.clear()
             room.elimination_end_reason = None
@@ -732,6 +765,13 @@ class GameEngine:
         question_start = room.question_started_at if room.question_started_at is not None else self._monotonic()
         for player in room.players.values():
             if room.match_config.elimination and player.eliminated:
+                continue
+            if room.match_config.royale and (player.answer is None or player.answer.choice != question.answer):
+                player.lives = max(0, player.lives - 1)
+                if player.lives == 0:
+                    player.eliminated = True
+                    player.eliminated_round = room.round_index + 1
+                    player.elimination_reason = "timeout" if player.answer is None else "incorrect"
                 continue
             if room.match_config.elimination and (
                 player.answer is None or player.answer.choice != question.answer
@@ -896,6 +936,15 @@ class GameEngine:
                 player.eliminated_round = None
                 player.elimination_reason = None
                 player.answer = None
+                player.lives = room.match_config.starting_lives
+                player.power_energy = 3 if room.match_config.power_play else 0
+                player.power_used.clear()
+                player.power_requests.clear()
+                player.power_double_active = False
+                player.power_shield_active = False
+                player.power_fifty_round = None
+                player.power_fifty_choices = ()
+                player.power_round_used = False
             room.momentum_eligible_ids.clear()
             room.momentum_adjustments.clear()
             room.elimination_end_reason = None
