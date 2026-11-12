@@ -15,7 +15,7 @@ class EventModel(BaseModel):
 class CreateEvent(EventModel):
     event: Literal["create"]
     name: str = Field(min_length=1, max_length=18)
-    mode: Literal["classic", "speed_challenge", "team_battle", "elimination", "solo_practice", "quiz_royale", "power_play"] = "classic"
+    mode: Literal["classic", "speed_challenge", "team_battle", "elimination", "solo_practice", "quiz_royale", "power_play", "bluff_master", "escape_room"] = "classic"
     question_count: int | None = Field(default=None, ge=1, le=20)
     difficulty: Literal["easy", "medium", "hard", "mixed"] = "medium"
     language: str = Field(default="en", min_length=2, max_length=35, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
@@ -71,6 +71,30 @@ class AbilityEvent(EventModel):
     request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class BluffSubmitEvent(EventModel):
+    event: Literal["bluff_submit"]
+    answer: str = Field(min_length=2, max_length=120)
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class BluffVoteEvent(EventModel):
+    event: Literal["bluff_vote"]
+    choice_id: str = Field(min_length=8, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class EscapeAnswerEvent(EventModel):
+    event: Literal["escape_answer"]
+    answer: str = Field(min_length=1, max_length=200)
+    puzzle_index: int = Field(ge=0, le=9)
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class EscapeHintEvent(EventModel):
+    event: Literal["escape_hint"]
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class RematchEvent(EventModel):
     event: Literal["rematch"]
 
@@ -80,7 +104,7 @@ class LobbyEvent(EventModel):
 
 
 ClientEvent: TypeAlias = Annotated[
-    CreateEvent | JoinEvent | ReconnectEvent | StartEvent | AnswerEvent | AbilityEvent | RematchEvent | LobbyEvent,
+    CreateEvent | JoinEvent | ReconnectEvent | StartEvent | AnswerEvent | AbilityEvent | BluffSubmitEvent | BluffVoteEvent | EscapeAnswerEvent | EscapeHintEvent | RematchEvent | LobbyEvent,
     Field(discriminator="event"),
 ]
 EVENT_ADAPTER = TypeAdapter(ClientEvent)

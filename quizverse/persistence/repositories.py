@@ -168,8 +168,11 @@ def _insert_quiz(session, owner_id: str | None, quiz: QuizRecord, questions: Ite
         raise ValueError("A quiz cannot contain more than 200 questions.")
     if quiz.status == "published" and not validated_questions:
         raise ValueError("A published quiz must contain at least one valid question.")
-    if quiz.status == "published" and any(item.question_format != "multiple_choice" for item in validated_questions):
-        raise ValueError("Only multiple-choice questions can be published for current player experiences.")
+    if quiz.status == "published" and (
+        len({item.question_format for item in validated_questions}) > 1
+        or any(item.question_format not in {"multiple_choice", "open_ended", "puzzle"} for item in validated_questions)
+    ):
+        raise ValueError("Published quizzes must contain one supported player format: multiple choice, open ended, or puzzle.")
     if quiz.provenance == "built_in_reviewed" and owner_id is not None:
         raise ValueError("Built-in reviewed quizzes cannot have an anonymous owner.")
     if quiz.provenance != "built_in_reviewed" and owner_id is None:
@@ -260,7 +263,8 @@ class QuizRepository:
             )
 
     def list_public_published(
-        self, *, category: str | None = None, difficulty: str | None = None, search: str | None = None, limit: int = 50
+        self, *, category: str | None = None, difficulty: str | None = None, search: str | None = None,
+        limit: int = 50, question_format: str = "multiple_choice"
     ) -> list[Quiz]:
         statement = (
             select(Quiz)
@@ -269,7 +273,7 @@ class QuizRepository:
                 Quiz.status == "published",
                 Quiz.visibility == "public",
                 Quiz.deleted_at.is_(None),
-                ~Quiz.questions.any(QuizQuestion.question_format != "multiple_choice"),
+                ~Quiz.questions.any(QuizQuestion.question_format != question_format),
             )
         )
         if category is not None:
@@ -352,8 +356,11 @@ class QuizRepository:
                 if validated_questions is not None
                 else [question.question_format for question in quiz.questions]
             )
-            if quiz.status == "published" and any(item != "multiple_choice" for item in resulting_formats):
-                raise ValueError("Only multiple-choice questions can be published for current player experiences.")
+            if quiz.status == "published" and (
+                len(set(resulting_formats)) > 1
+                or any(item not in {"multiple_choice", "open_ended", "puzzle"} for item in resulting_formats)
+            ):
+                raise ValueError("Published quizzes must contain one supported player format: multiple choice, open ended, or puzzle.")
 
             quiz.title = validated_quiz.title
             quiz.description = validated_quiz.description
@@ -387,8 +394,11 @@ class QuizRepository:
                 return None
             if published and not quiz.questions:
                 raise ValueError("A quiz needs at least one question before it can be published.")
-            if published and any(question.question_format != "multiple_choice" for question in quiz.questions):
-                raise ValueError("Only multiple-choice questions can be published for current player experiences.")
+            if published and (
+                len({question.question_format for question in quiz.questions}) > 1
+                or any(question.question_format not in {"multiple_choice", "open_ended", "puzzle"} for question in quiz.questions)
+            ):
+                raise ValueError("Published quizzes must contain one supported player format: multiple choice, open ended, or puzzle.")
             new_status = "published" if published else "draft"
             if quiz.status != new_status:
                 quiz.status = new_status

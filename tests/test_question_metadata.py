@@ -152,13 +152,13 @@ def test_question_metadata_persists_with_taxonomy_and_tags(metadata_database: Da
         assert question.source_published_at == date(2024, 1, 1)
 
 
-def test_non_mcq_author_payload_is_private_and_cannot_be_published(metadata_database: Database) -> None:
+def test_open_ended_author_payload_can_be_published_without_player_answer_leak(metadata_database: Database) -> None:
     app = create_app(database=metadata_database)
     with TestClient(app) as client:
         owner = client.post("/api/quiz-owners").json()["capability"]
         headers = {"Authorization": f"Bearer {owner}"}
         created = client.post("/api/quizzes", headers=headers, json={
-            "title": "Open answer draft", "category": "language", "questions": [{
+                "title": "Open answer draft", "category": "language", "visibility": "public", "questions": [{
                 "prompt": "What is the capital of France?", "format": "open_ended",
                 "format_payload": {"canonical_answer": "Paris", "accepted_aliases": ["City of Paris"]},
                 "language": "en", "learning_levels": ["college_arena"],
@@ -173,7 +173,13 @@ def test_non_mcq_author_payload_is_private_and_cannot_be_published(metadata_data
         assert question["review_status"] == "unreviewed"
         assert client.get(f"/api/quizzes/{quiz_id}").status_code == 404
         assert client.get(f"/api/quizzes/{quiz_id}", headers=headers).json()["questions"][0]["format_payload"]["canonical_answer"] == "Paris"
-        assert client.post(f"/api/quizzes/{quiz_id}/publish", headers=headers).status_code == 422
+        published = client.post(f"/api/quizzes/{quiz_id}/publish", headers=headers)
+        assert published.status_code == 200
+        assert published.json()["questions"][0]["format_payload"]["canonical_answer"] == "Paris"
+        public_summary = client.get("/api/quizzes?question_format=open_ended").json()["quizzes"]
+        assert len(public_summary) == 1 and public_summary[0]["id"] == quiz_id
+        assert public_summary[0]["questions"] == []
+        assert client.get(f"/api/quizzes/{quiz_id}").status_code == 404
         assert quiz_id not in client.get("/api/quizzes").text
 
 

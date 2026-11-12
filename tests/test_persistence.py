@@ -390,6 +390,50 @@ def test_server_game_source_enforces_visibility_and_returns_authoritative_answer
     assert all(question.id != private.questions[0].id for question in public_inventory)
 
 
+def test_structured_mode_game_source_authorizes_published_open_and_puzzle_content(migrated_database) -> None:
+    database, _ = migrated_database
+    caps = CapabilityService(database)
+    access = QuizAccessService(database)
+    owner = caps.create_owner()
+    other = caps.create_owner()
+    open_record = valid_question(
+        prompt="Name the red planet.", options=None, correct_option_index=None,
+        question_format="open_ended", format_payload={"canonical_answer": "Mars", "accepted_aliases": ["the planet Mars"]},
+        review_status="reviewed", learning_levels=("teen_challenge",),
+    )
+    private_open = QuizRepository(database).create_with_questions(
+        owner.owner_id, valid_quiz(title="Private open answers", status="published"), [open_record]
+    )
+    public_open = QuizRepository(database).create_with_questions(
+        other.owner_id, valid_quiz(title="Public open answers", visibility="public", status="published"), [open_record]
+    )
+    with pytest.raises(PermissionError):
+        access.game_question_source(quiz_ids=(private_open.id,), question_format="open_ended")
+    assert access.game_question_source(
+        quiz_ids=(private_open.id,), capability=owner.token, question_format="open_ended"
+    )[0].format_payload["canonical_answer"] == "Mars"
+    assert access.game_question_source(
+        quiz_ids=(public_open.id,), question_format="open_ended"
+    )[0].format_payload["canonical_answer"] == "Mars"
+    public_listing = access.list_public_quizzes(question_format="open_ended")
+    assert {item.id for item in public_listing} == {public_open.id}
+    assert public_listing[0].questions == ()
+
+    puzzle_record = valid_question(
+        prompt="What number follows 2, 4, 6?", options=None, correct_option_index=None,
+        question_format="puzzle", format_payload={
+            "puzzle_type": "number-pattern", "solution": "8", "hint": "Add two each time",
+            "puzzle_set_id": "sample-set", "room_index": 1, "puzzle_index": 0,
+        }, review_status="reviewed", learning_levels=("teen_challenge",),
+    )
+    public_puzzle = QuizRepository(database).create_with_questions(
+        other.owner_id, valid_quiz(title="Public puzzle", visibility="public", status="published"), [puzzle_record]
+    )
+    sourced = access.game_question_source(quiz_ids=(public_puzzle.id,), question_format="puzzle")
+    assert sourced[0].format_payload["solution"] == "8"
+    assert access.list_public_quizzes(question_format="puzzle")[0].questions == ()
+
+
 def test_private_play_access_stops_after_revocation_or_expiry(migrated_database) -> None:
     database, _ = migrated_database
     capabilities = CapabilityService(database)

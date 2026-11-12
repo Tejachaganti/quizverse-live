@@ -18,14 +18,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from quizverse.engine import GameEngine, GameError
 from quizverse.questions import QUESTIONS
+from quizverse.special_questions import BLUFF_QUESTIONS, ESCAPE_QUESTIONS
 from quizverse.ai_generation import AIProvider, GenerationService
 from quizverse.persistence.authorization import QuizAccessService
 from quizverse.persistence.db import Database
 from quizverse.protocol import (
     AbilityEvent,
     AnswerEvent,
+    BluffSubmitEvent,
+    BluffVoteEvent,
     ClientEvent,
     CreateEvent,
+    EscapeAnswerEvent,
+    EscapeHintEvent,
     JoinEvent,
     LobbyEvent,
     ReconnectEvent,
@@ -158,16 +163,20 @@ def create_app(
     quiz_access = QuizAccessService(persistence)
 
     def load_game_questions(selection: dict[str, object]):
+        mode = selection.get("mode")
+        question_format = "open_ended" if mode == "bluff_master" else "puzzle" if mode == "escape_room" else "multiple_choice"
         try:
             if selection.get("content_scope", "built_in") == "built_in":
                 try:
-                    return quiz_access.built_in_game_questions()
+                    inventory = quiz_access.built_in_game_questions()
                 except SQLAlchemyError:
-                    return QUESTIONS
+                    inventory = QUESTIONS
+                return inventory + BLUFF_QUESTIONS + ESCAPE_QUESTIONS
             return quiz_access.game_question_source(
                 quiz_ids=tuple(selection.get("quiz_ids", ())),
                 capability=selection.get("library_capability") if isinstance(selection.get("library_capability"), str) else None,
                 public_library=selection.get("content_scope") == "public_library",
+                question_format=question_format,
             )
         except ValueError as error:
             raise ValueError(str(error)) from error
@@ -289,6 +298,18 @@ def create_app(
                         elif isinstance(event, AbilityEvent):
                             await hub.engine.activate_ability(code, player_id, event.ability, event.request_id)
                             await hub.broadcast_room(code, "ability-update")
+                        elif isinstance(event, BluffSubmitEvent):
+                            await hub.engine.submit_bluff(code, player_id, event.answer, event.request_id)
+                            await hub.broadcast_room(code, "bluff-submit")
+                        elif isinstance(event, BluffVoteEvent):
+                            await hub.engine.cast_bluff_vote(code, player_id, event.choice_id, event.request_id)
+                            await hub.broadcast_room(code, "bluff-vote")
+                        elif isinstance(event, EscapeAnswerEvent):
+                            await hub.engine.submit_escape_answer(code, player_id, event.answer, event.puzzle_index, event.request_id)
+                            await hub.broadcast_room(code, "escape-answer")
+                        elif isinstance(event, EscapeHintEvent):
+                            await hub.engine.request_escape_hint(code, player_id, event.request_id)
+                            await hub.broadcast_room(code, "escape-hint")
                         elif isinstance(event, (RematchEvent, LobbyEvent)):
                             state = await hub.engine.snapshot(code, player_id)
                             if state["phase"] != "results":

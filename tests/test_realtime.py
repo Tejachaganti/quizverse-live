@@ -15,6 +15,7 @@ from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from quizverse.engine import COUNTDOWN_SECONDS, GameEngine, QUESTION_SECONDS, Phase
 from quizverse.realtime import create_app
 from quizverse.questions import QUESTIONS
+from quizverse.special_questions import ESCAPE_QUESTIONS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -412,6 +413,88 @@ def test_elimination_websocket_synchronizes_mode_and_broadcasts_elimination_reve
                 assert eliminated["eliminated"] is True
                 assert eliminated["elimination_reason"] == "incorrect"
                 assert "answer" not in reveal["question"]
+
+
+def test_bluff_master_websocket_actions_keep_voting_anonymous_and_reveal_scores() -> None:
+    app = create_app()
+
+    def receive_matching(websocket, predicate):
+        for _ in range(20):
+            message = websocket.receive_json()
+            if predicate(message):
+                return message
+        raise AssertionError("Expected WebSocket event was not received")
+
+    with TestClient(app) as client:
+        sockets = [client.websocket_connect("/ws") for _ in range(3)]
+        with sockets[0] as host, sockets[1] as guest, sockets[2] as third:
+            host.send_json({"event": "create", "name": "Bluff Host", "mode": "bluff_master"})
+            joined = receive_matching(host, lambda message: message.get("event") == "joined")
+            code = joined["state"]["code"]
+            for websocket, name in ((guest, "Bluff Guest"), (third, "Bluff Third")):
+                websocket.send_json({"event": "join", "name": name, "code": code})
+                receive_matching(websocket, lambda message: message.get("event") == "joined")
+            host.send_json({"event": "start"})
+            receive_matching(host, lambda message: message.get("state", {}).get("phase") == "submission")
+            for websocket, answer, action_id in (
+                (host, "a violet lantern", "ws-bluff-submit-0001"),
+                (guest, "a quiet waterfall", "ws-bluff-submit-0002"),
+                (third, "a silver compass", "ws-bluff-submit-0003"),
+            ):
+                websocket.send_json({"event": "bluff_submit", "answer": answer, "request_id": action_id})
+            voting = [
+                receive_matching(websocket, lambda message: message.get("event") == "bluff-submit" and message.get("state", {}).get("phase") == "voting")["state"]
+                for websocket in (host, guest, third)
+            ]
+            for state in voting:
+                assert "correct_answer" not in state["bluff"]
+                assert all("author_id" not in item and "is_correct" not in item for item in state["bluff"]["choices"])
+                assert "answer" not in state["question"]
+            for index, (websocket, state) in enumerate(zip((host, guest, third), voting)):
+                choice = next(item for item in state["bluff"]["choices"] if not item["is_yours"])
+                websocket.send_json({"event": "bluff_vote", "choice_id": choice["id"], "request_id": f"ws-bluff-vote-{index:04d}-01"})
+            revealed = [
+                receive_matching(websocket, lambda message: message.get("event") == "bluff-vote" and message.get("state", {}).get("phase") == "reveal")["state"]
+                for websocket in (host, guest, third)
+            ]
+            assert all(isinstance(state["bluff"]["correct_answer"], str) for state in revealed)
+            assert all(any(item["author"] == "Bluff Host" for item in state["bluff"]["results"]) for state in revealed)
+
+
+def test_escape_room_websocket_hint_and_shared_progress() -> None:
+    app = create_app()
+
+    def receive_matching(websocket, predicate):
+        for _ in range(20):
+            message = websocket.receive_json()
+            if predicate(message):
+                return message
+        raise AssertionError("Expected WebSocket event was not received")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws") as host, client.websocket_connect("/ws") as guest:
+            host.send_json({"event": "create", "name": "Escape Host", "mode": "escape_room"})
+            joined = receive_matching(host, lambda message: message.get("event") == "joined")
+            code = joined["state"]["code"]
+            guest.send_json({"event": "join", "name": "Escape Guest", "code": code})
+            receive_matching(guest, lambda message: message.get("event") == "joined")
+            host.send_json({"event": "start"})
+            start = receive_matching(host, lambda message: message.get("state", {}).get("phase") == "escape_puzzle")
+            assert start["state"]["question_seconds"] == 900
+            host.send_json({"event": "escape_hint", "request_id": "ws-escape-hint-request-01"})
+            hint_host = receive_matching(host, lambda message: message.get("event") == "escape-hint")["state"]
+            hint_guest = receive_matching(guest, lambda message: message.get("event") == "escape-hint")["state"]
+            assert hint_host["escape"]["hints_remaining"] == hint_guest["escape"]["hints_remaining"] == 2
+            assert hint_host["escape"]["current_puzzle"]["hint"] == hint_guest["escape"]["current_puzzle"]["hint"]
+            host.send_json({"event": "escape_answer", "answer": "wrong", "puzzle_index": 0, "request_id": "ws-escape-wrong-answer-01"})
+            wrong = receive_matching(host, lambda message: message.get("event") == "escape-answer")["state"]
+            assert wrong["escape"]["solved_puzzles"] == 0 and wrong["escape"]["hints_remaining"] == 2
+            receive_matching(guest, lambda message: message.get("event") == "escape-answer")
+            correct = ESCAPE_QUESTIONS[0].format_payload["solution"]
+            guest.send_json({"event": "escape_answer", "answer": correct, "puzzle_index": 0, "request_id": "ws-escape-correct-answer-01"})
+            progressed = receive_matching(guest, lambda message: message.get("event") == "escape-answer")["state"]
+            assert progressed["escape"]["solved_puzzles"] == 1
+            assert progressed["escape"]["current_puzzle"]["index"] == 1
 
 
 def test_websocket_rejects_bad_origin_unjoined_actions_and_oversized_payload(server_url: str) -> None:

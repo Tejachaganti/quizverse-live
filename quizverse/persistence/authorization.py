@@ -310,11 +310,23 @@ class QuizAccessService:
         difficulty: str | None = None,
         search: str | None = None,
         limit: int = 50,
+        question_format: str = "multiple_choice",
     ) -> tuple[PlayerQuizView, ...]:
         quizzes = self._quizzes.list_public_published(
-            category=category, difficulty=difficulty, search=search, limit=limit
+            category=category, difficulty=difficulty, search=search, limit=limit,
+            question_format=question_format,
         )
-        return tuple(_player_projection(quiz) for quiz in quizzes)
+        if question_format == "multiple_choice":
+            return tuple(_player_projection(quiz) for quiz in quizzes)
+        # Mode-specific listings reveal only quiz metadata. Answer payloads remain server-side.
+        return tuple(
+            PlayerQuizView(
+                id=quiz.id, title=quiz.title, description=quiz.description, category=quiz.category,
+                difficulty=quiz.difficulty, default_time_limit_seconds=quiz.default_time_limit_seconds,
+                questions=(),
+            )
+            for quiz in quizzes
+        )
 
     def list_owned_quizzes(self, owner_token: str) -> tuple[AuthorQuizView, ...] | None:
         owner_id = self._capabilities.validate(owner_token, scope=CapabilityScope.OWNER)
@@ -399,11 +411,12 @@ class QuizAccessService:
         return _player_projection(quiz)
 
     def game_question_source(
-        self, *, quiz_ids: tuple[str, ...] = (), capability: str | None = None, public_library: bool = False
+        self, *, quiz_ids: tuple[str, ...] = (), capability: str | None = None,
+        public_library: bool = False, question_format: str = "multiple_choice"
     ) -> tuple[Question, ...]:
         """Return answer keys only to the server after validating quiz visibility/capabilities."""
         if public_library:
-            quizzes = self._quizzes.list_public_published(limit=100)
+            quizzes = self._quizzes.list_public_published(limit=100, question_format=question_format)
         else:
             if not quiz_ids or len(quiz_ids) > 20 or len(set(quiz_ids)) != len(quiz_ids):
                 raise ValueError("Select between 1 and 20 unique quizzes.")
@@ -420,16 +433,17 @@ class QuizAccessService:
                 elif quiz.visibility != "public":
                     raise PermissionError("A selected quiz is not playable.")
                 quizzes.append(quiz)
-        if not quizzes or any(question.question_format != "multiple_choice" for quiz in quizzes for question in quiz.questions):
-            raise ValueError("The selected content has no playable MCQ inventory or includes an unsupported question format.")
+        if not quizzes or any(question.question_format != question_format for quiz in quizzes for question in quiz.questions):
+            raise ValueError(f"The selected content must contain only {question_format} questions to play this mode.")
         exam_ids = self._exam_ids_by_category()
 
         return tuple(
             Question(
                 category=question.category or quiz.category,
                 prompt=question.prompt,
-                options=(question.option_a, question.option_b, question.option_c, question.option_d),  # type: ignore[arg-type]
-                answer=question.correct_option_index,  # type: ignore[arg-type]
+                options=(question.option_a, question.option_b, question.option_c, question.option_d)
+                if question.question_format == "multiple_choice" else ("", "", "", ""),  # type: ignore[arg-type]
+                answer=question.correct_option_index if question.correct_option_index is not None else -1,
                 id=question.id,
                 category_id=_game_category_id(question, quiz),
                 difficulty=question.difficulty or quiz.difficulty,
@@ -439,6 +453,7 @@ class QuizAccessService:
                 question_format=question.question_format,
                 exam_collection_ids=exam_ids(_game_category_id(question, quiz)),
                 provenance=question.provenance,
+                format_payload=question.format_payload,
             )
             for quiz in quizzes for question in quiz.questions
         )

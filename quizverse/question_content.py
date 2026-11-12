@@ -47,7 +47,13 @@ class OpenEndedPayload(StrictContentModel):
 class PuzzlePayload(StrictContentModel):
     puzzle_type: str = Field(min_length=1, max_length=50)
     solution: str = Field(min_length=1, max_length=4_000)
+    accepted_aliases: list[str] = Field(default_factory=list, max_length=20)
     room_metadata: dict[str, str] = Field(default_factory=dict, max_length=20)
+    puzzle_set_id: str | None = Field(default=None, min_length=1, max_length=50)
+    room_index: int | None = Field(default=None, ge=1, le=5)
+    puzzle_index: int | None = Field(default=None, ge=0, le=9)
+    dependencies: list[str] = Field(default_factory=list, max_length=9)
+    hint: str | None = Field(default=None, min_length=1, max_length=500)
 
     @field_validator("puzzle_type")
     @classmethod
@@ -62,6 +68,43 @@ class PuzzlePayload(StrictContentModel):
         if any(not key or len(key) > 50 or len(item) > 500 for key, item in value.items()):
             raise ValueError("Puzzle room metadata keys and values exceed their limits.")
         return value
+
+    @field_validator("puzzle_set_id")
+    @classmethod
+    def puzzle_set_id_is_slug(cls, value: str | None) -> str | None:
+        if value is not None and not _SLUG_PATTERN.fullmatch(value):
+            raise ValueError("Puzzle set ID must be a lowercase slug.")
+        return value
+
+    @field_validator("dependencies")
+    @classmethod
+    def dependencies_are_unique(cls, values: list[str]) -> list[str]:
+        if any(not _SLUG_PATTERN.fullmatch(value) for value in values) or len(values) != len(set(values)):
+            raise ValueError("Puzzle dependencies must be unique lowercase slugs.")
+        return values
+
+    @field_validator("accepted_aliases")
+    @classmethod
+    def solution_aliases_are_distinct(cls, values: list[str]) -> list[str]:
+        normalized = [normalize_open_answer(value) for value in values]
+        if any(not value for value in normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("Puzzle answer aliases must be non-empty and distinct.")
+        return values
+
+    @model_validator(mode="after")
+    def escape_room_coordinates_are_complete(self) -> "PuzzlePayload":
+        coordinates = (self.puzzle_set_id, self.room_index, self.puzzle_index)
+        if any(item is not None for item in coordinates) and any(item is None for item in coordinates):
+            raise ValueError("Escape-room puzzles need a set ID, room index, and puzzle index.")
+        if self.room_index is not None and self.puzzle_index is not None:
+            expected_room = self.puzzle_index // 2 + 1
+            if self.room_index != expected_room:
+                raise ValueError("Escape-room puzzle coordinates must contain two puzzles per room.")
+        if len({normalize_open_answer(value) for value in [self.solution, *self.accepted_aliases]}) != 1 + len(self.accepted_aliases):
+            raise ValueError("Puzzle solution and accepted aliases must be distinct.")
+        if self.hint is not None and not self.hint.strip():
+            raise ValueError("Puzzle hint must contain text.")
+        return self
 
 
 class SequencePayload(StrictContentModel):

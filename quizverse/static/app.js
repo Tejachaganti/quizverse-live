@@ -149,9 +149,19 @@
     };
     drawTopics();
     if (!state.categories.length) fetch('/api/categories').then(r=>r.ok?r.json():[]).then(tree=>{const flatten=nodes=>nodes.flatMap(n=>[{id:n.id,display_name:n.display_name},...flatten(n.children||[])]);state.categories=flatten(tree);const validIds=new Set(state.categories.map(c=>c.id));state.preferences.topics=Object.fromEntries(Object.entries(state.preferences.topics).filter(([id])=>validIds.has(id)));try{localStorage.setItem(PREFERENCE_KEY,JSON.stringify(state.preferences));}catch{}drawTopics();picker.querySelector('#match-categories').innerHTML=state.categories.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)}</option>`).join('');}).catch(()=>{picker.querySelector('#player-topic-settings').innerHTML='<p class="microcopy">Topic choices could not be loaded.</p>';});
-    fetch('/api/quizzes?limit=100').then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.publicQuizzes=data.quizzes||[];const select=picker.querySelector('#match-quiz');select.innerHTML=state.publicQuizzes.map(q=>`<option value="${escapeHtml(q.id)}">${escapeHtml(q.title)}</option>`).join('');}).catch(()=>{});
+    const fillQuizChoices = () => {
+      const mode = select.value;
+      const format = mode === 'bluff_master' ? 'open_ended' : mode === 'escape_room' ? 'puzzle' : 'multiple_choice';
+      fetch(`/api/quizzes?limit=100&question_format=${format}`).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{
+        state.publicQuizzes=data.quizzes||[];
+        const selectQuizzes=picker.querySelector('#match-quiz');
+        const publicOptions=state.publicQuizzes.map(q=>new Option(q.title,q.id));
+        const ownedOptions=state.ownedQuizzes.filter(q=>q.status==='published' && q.questions.every(item=>item.format===format)).map(q=>new Option(`${q.title} · ${q.visibility}`,q.id));
+        selectQuizzes.replaceChildren(...[...publicOptions,...ownedOptions.filter(owned=>!publicOptions.some(item=>item.value===owned.value))]);
+      }).catch(()=>{});
+    };
     const ownerCapability = sessionStorage.getItem('qv-owner-capability') || '';
-    if (ownerCapability) fetch('/api/quizzes/mine',{headers:{Authorization:`Bearer ${ownerCapability}`}}).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.ownedQuizzes=(data.quizzes||[]).filter(q=>q.status==='published');const select=picker.querySelector('#match-quiz');for(const q of state.ownedQuizzes)if(![...select.options].some(o=>o.value===q.id))select.add(new Option(`${q.title} · ${q.visibility}`,q.id));}).catch(()=>{});
+    if (ownerCapability) fetch('/api/quizzes/mine',{headers:{Authorization:`Bearer ${ownerCapability}`}}).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.ownedQuizzes=(data.quizzes||[]).filter(q=>q.status==='published');fillQuizChoices();}).catch(()=>{});
     fetch('/api/exam-collections').then(r=>r.ok?r.json():[]).then(items=>{state.examCollections=items;const exam=picker.querySelector('#match-exam');exam.innerHTML='<option value="">Any / not applicable</option>'+items.map(x=>`<option value="${escapeHtml(x.id)}">${escapeHtml(x.display_name)}</option>`).join('');}).catch(()=>{});
     actions.before(picker);
     const select = picker.querySelector('#game-mode');
@@ -164,6 +174,7 @@
     eliminationOption.textContent = 'Elimination - survive each round';
     select.append(eliminationOption);
     for (const [value, label] of [['quiz_royale','Quiz Royale - 4-20 players - 3 lives'],['power_play','Power Play - abilities and energy']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); }
+    for (const [value, label] of [['bluff_master','Bluff Master - 3-8 players - fake and vote'],['escape_room','Escape Room Quiz - 2-8 players - team puzzle']]) { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); }
     const soloOption = document.createElement('option');
     soloOption.value = 'solo_practice';
     soloOption.textContent = 'Solo Practice - just you';
@@ -172,10 +183,15 @@
     const updateSelection = () => {
       state.selectedMode = select.value;
       const rounds = picker.querySelector('#match-count');
-      if (rounds && !rounds.dataset.customized) rounds.value = select.value === 'quiz_royale' ? '15' : '10';
+      const fixedCount = ['bluff_master','escape_room'].includes(select.value);
+      if (rounds && (fixedCount || !rounds.dataset.customized)) rounds.value = select.value === 'quiz_royale' ? '15' : '10';
+      if (rounds) rounds.disabled = fixedCount;
+      fillQuizChoices();
       picker.querySelector('#mode-description').textContent = select.value === 'quiz_royale'
         ? 'Quiz Royale: four to twenty players start with three lives. Wrong or unanswered rounds cost one life.'
         : select.value === 'power_play' ? 'Power Play: privately spend energy on 50:50, Double Points, or Shield.'
+        : select.value === 'bluff_master' ? 'Bluff Master: write anonymous fake answers, then vote. Correct votes earn 1,000; fooling votes earn 500.'
+        : select.value === 'escape_room' ? 'Escape Room: solve ten linked puzzles together with three shared hints before the 15-minute clock ends.'
         : select.value === 'speed_challenge'
         ? 'Speed Challenge: 1,000 points plus up to 500 speed points scaled to 10 seconds. Momentum Shift is off.'
         : select.value === 'elimination'
@@ -186,12 +202,14 @@
           ? 'Team Battle: 4–8 real players, with an even roster. Teams alternate by join order; individual points combine for the team. Momentum Shift is off.'
           : 'Classic: 1,000 points plus up to 500 speed points. Momentum Shift is active.';
       const timePill = app.querySelector('.format-row .format-pill:last-child b');
-      if (timePill) timePill.textContent = select.value === 'speed_challenge' ? '10s' : '15s';
+      if (timePill) timePill.textContent = ({speed_challenge:'10s',quiz_royale:'12s',bluff_master:'30s',escape_room:'15m'})[select.value] || '15s';
       const createButton = app.querySelector('[data-action="create"]');
       if (createButton) createButton.textContent = select.value === 'solo_practice' ? 'Create Solo Practice' : '✦  Create Arena';
       const homeCopy = app.querySelector('.home-layout > .hero-copy > p');
       if (homeCopy) homeCopy.textContent = select.value === 'solo_practice'
         ? 'Ten questions, your own pace, and a score that is yours alone. Step into the arena whenever you are ready.'
+        : select.value === 'bluff_master' ? 'Ten prompts. Anonymous bluffs. Try to fool your friends, then spot their fakes.'
+        : select.value === 'escape_room' ? 'Five rooms, ten linked puzzles, and one shared team timer. Work together to escape.'
         : 'Ten quick-fire questions. Your favorite people. One gloriously debatable winner. Your next great game night starts here.';
       const joinArt = app.querySelector('.art-label.bottom strong');
       if (joinArt) joinArt.textContent = select.value === 'solo_practice' ? 'YOUR OWN PRACTICE ARENA' : 'YOUR CREW, YOUR ARENA';
@@ -467,10 +485,16 @@
     const categoryNames = (filters.categories || []).map(id => state.categories.find(c=>c.id===id)?.display_name || id);
     const examName = state.examCollections.find(x=>x.id===filters.exam_collection_id)?.display_name || (filters.exam_collection_id ? filters.exam_collection_id : 'Any');
     const filterSummary = `<section class="rules-card"><h3>Shared question filters</h3><div class="rule-line"><span>Content</span><strong>${filters.content_scope === 'public_library' ? 'Published public library' : filters.content_scope === 'selected_quizzes' ? 'Selected quizzes' : 'Built-in bank'}</strong></div><div class="rule-line"><span>Difficulty</span><strong>${escapeHtml(filters.difficulty || 'Medium')}</strong></div><div class="rule-line"><span>Suitability</span><strong>${escapeHtml((filters.learning_preset || 'teen_challenge').replaceAll('_',' '))}</strong></div><div class="rule-line"><span>Language</span><strong>${escapeHtml(filters.language || 'en')}</strong></div><div class="rule-line"><span>Exam collection</span><strong>${escapeHtml(examName)}</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count} rounds</strong></div><div class="rule-line"><span>Topics</span><strong>${escapeHtml(categoryNames.length ? categoryNames.join(', ') : 'All eligible')}</strong></div><p class="microcopy">Everyone receives the same validated question sequence.</p></section>`;
+    if (room.mode === 'bluff_master' || room.mode === 'escape_room') {
+      const bluff = room.mode === 'bluff_master';
+      return `<section class="room-layout"><div class="room-card"><button class="back-button" type="button" data-action="leave">← &nbsp;Leave arena</button><div class="section-kicker">${bluff ? 'BLUFF MASTER' : 'ESCAPE ROOM QUIZ'}</div><h2>${bluff ? 'Think up a convincing bluff.' : 'Unlock the five-room challenge.'}</h2><div class="room-code-row"><div class="room-code">${escapeHtml(room.code)}</div><button class="btn btn-secondary" type="button" data-action="copy">Copy code</button></div><p class="room-note">${bluff ? 'Each player writes one fake answer, then everyone votes anonymously. Three players minimum.' : 'Work as one team through ten linked puzzles. You share three hints and a fifteen-minute clock.'}</p><div class="crew-heading"><h3>The crew</h3><span class="capacity">${room.players.length} / 8 players</span></div><div class="player-list" aria-live="polite">${room.players.map(playerRow).join('')}</div>${host ? `<button class="btn btn-primary btn-full" type="button" data-action="start" ${room.can_start ? '' : 'disabled'}>${bluff ? 'Start Bluff Master' : 'Start Escape Room'}</button><p class="microcopy">${room.can_start ? 'Content is validated before the countdown begins.' : escapeHtml(room.can_start_reason || 'Waiting for players.')}</p>` : `<div class="waiting-note">Waiting for ${escapeHtml(hostName)} to start…</div>`}</div><aside class="side-stack">${filterSummary}<section class="rules-card"><h3>${bluff ? 'Round rules' : 'Adventure rules'}</h3>${bluff ? '<p>30 seconds to submit a fake answer, then 15 seconds to vote. Correct vote: 1,000 points. Each opponent fooled: 500 points to the author. Results show answer authors.</p>' : '<p>Five rooms, two validated puzzles each. Correct team answers unlock the next puzzle. Three shared hints; finish all ten puzzles within 15 minutes.</p>'}</section></aside></section>`;
+    }
     return `<section class="room-layout"><div class="room-card"><button class="back-button" type="button" data-action="leave">← &nbsp;Leave arena</button><div class="section-kicker">YOUR PRIVATE GAME ROOM</div><h2>Gather your people.</h2><div class="room-code-row"><div class="room-code" aria-label="Room code ${escapeHtml(room.code)}">${escapeHtml(room.code)}</div><button class="btn btn-secondary" type="button" data-action="copy">▣ &nbsp;Copy code</button></div><p class="room-note">Share this code with your crew. Once two players are here, the host can launch the quiz.</p><div class="crew-heading"><h3>The crew</h3><span class="capacity">${room.players.length} / ${room.max_players || 8} players</span></div><div class="player-list" aria-live="polite">${room.players.map(playerRow).join('')}</div>${host ? `<button class="btn btn-primary btn-full" type="button" data-action="start" ${room.can_start ? '' : 'disabled'}>Launch the quiz &nbsp;✦</button><p class="microcopy">${room.can_start ? 'Everyone ready? Let the brain battle begin.' : 'Waiting for at least one more connected player.'}</p>` : `<div class="waiting-note"><span class="pulse-dot"></span>Waiting for ${escapeHtml(hostName)} to launch…</div>`}</div><aside class="side-stack">${filterSummary}<section class="rules-card"><h3>Tonight's format</h3><div class="rule-line"><span>Players</span><strong>2–8</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count || 10} rounds</strong></div><div class="rule-line"><span>Answer time</span><strong>15 seconds</strong></div></section><section class="rules-card"><h3>How scoring works</h3><div class="rule-line"><span>Correct answer</span><strong>1,000 pts</strong></div><div class="rule-line"><span>Speed bonus</span><strong>Up to 500</strong></div><p class="microcopy">The server records answer time. Faster correct answers earn a bigger bonus.</p></section><section class="rules-card momentum-card"><h3>Momentum Shift</h3><p class="momentum-copy">At the start of a round, players trailing the leader by 1–1,500 points qualify. A correct answer in the first 5 seconds earns a published <strong>+250 points</strong>. Nobody loses points.</p></section></aside></section>`;
   }
   function game() {
     const room = state.room;
+    if (room.mode === 'bluff_master') return bluffGame(room);
+    if (room.mode === 'escape_room') return escapeGame(room);
     const question = room.question;
     const feedback = room.answer_feedback;
     const countdown = room.phase === 'countdown';
@@ -479,8 +503,38 @@
     const power = room.power_play || {};
     return `<section class="game-layout"><div class="quiz-card"><div class="quiz-head"><div class="quiz-tags"><span class="round-tag">ROUND ${String(Math.min(room.round, 10)).padStart(2, '0')} / 10</span>${question ? `<span class="category-tag">${escapeHtml(question.category)}</span>` : ''}</div><div class="timer-ring" id="timer-ring" role="timer" aria-label="Time remaining"><span class="timer-number" id="timer-number">${countdown ? '3' : room.question_seconds}</span></div></div>${countdown ? `<h1 class="question-text">Get ready.<br>The arena opens in a moment.</h1><div class="waiting-note">Find your focus. First question incoming.</div>` : `<h1 class="question-text">${escapeHtml(question?.prompt || 'Loading the next question…')}</h1>${room.mode === 'power_play' ? `<section class="power-play-controls"><div class="energy-line"><strong>⚡ ${power.energy ?? 3} / 5 energy</strong><span>${power.shield_active ? 'Shield active' : power.double_active ? 'Double Points armed' : 'One ability per question'}</span></div><div class="ability-buttons">${[['fifty_fifty','50:50'],['double_points','Double Points'],['shield','Shield']].map(([id,label]) => `<button class="btn btn-secondary ability-button" type="button" data-action="ability" data-ability="${id}" ${(room.phase !== 'question' || room.answered || (power.energy ?? 0) < 2 || !(power.available || []).includes(id) || power.used_this_round) ? 'disabled' : ''}>${label}${(power.used || []).includes(id) ? ' · Used' : ''}</button>`).join('')}</div><p class="microcopy">Incorrect or unanswered results lose 250 points; Shield blocks the next such penalty.</p></section>` : ''}<div class="answer-grid">${((question?.visible_choices || [0,1,2,3]).map(index => [index, question.options[index]])).map(([index, option]) => { const reveal = room.phase === 'reveal'; const correct = reveal && feedback?.correct === index; const selected = feedback?.selected === index; const classes = ['answer-button', correct ? 'correct' : '', selected ? 'selected' : '', reveal && selected && !correct ? 'incorrect' : ''].filter(Boolean).join(' '); return `<button class="${classes}" type="button" data-action="answer" data-choice="${index}" ${room.phase !== 'question' || room.answered ? 'disabled' : ''}><span class="answer-letter">${labels[index]}</span><span>${escapeHtml(option)}</span>${correct ? '<span aria-label="Correct answer">✓</span>' : ''}</button>`; }).join('')}</div>${feedback ? `<div class="reveal-banner ${feedback.was_correct ? '' : 'wrong'}" role="status"><span>${feedback.was_correct ? '✦' : '↻'}</span><span>${feedback.was_correct ? `Brilliant. That one is yours. +${feedback.speed_bonus.toLocaleString()} speed${feedback.momentum_bonus ? ` · +${feedback.momentum_bonus} Momentum Shift` : ''}.` : 'The right answer is highlighted. Next round soon.'}</span></div>` : ''}${feedback && room.mode === 'power_play' ? `<p class="power-feedback" role="status">${feedback.doubled ? 'Double Points doubled your correct score.' : feedback.shield_consumed ? 'Shield consumed. The 250 point penalty was blocked.' : feedback.power_penalty ? '250 points were deducted.' : ''}</p>` : ''}<div class="quiz-foot"><span>${room.answered ? 'Answer locked in. Eyes on the reveal.' : 'Choose your answer before time runs out.'}</span><span class="answer-status"><span class="mini-dot"></span>${room.players.filter(player => player.answered).length} / ${room.players.length} answered</span></div><p class="momentum-note">${momentum?.eligible ? 'Momentum Shift active: you qualify this round. Correct in 5 seconds for +250.' : 'Momentum Shift: trailing by 1–1,500 points can earn +250 for a correct answer in the first 5 seconds.'}</p>`}</div>${leaderboard()}</section>`;
   }
+  function phaseClock(room) {
+    const phase = room.phase;
+    const count = phase === 'countdown' ? 3 : phase === 'submission' ? 30 : phase === 'voting' ? 15 : phase === 'reveal' ? 5 : 900;
+    return `<div class="timer-ring" id="timer-ring" role="timer" aria-label="Time remaining"><span class="timer-number" id="timer-number">${count}</span></div>`;
+  }
+  function bluffGame(room) {
+    const bluff = room.bluff || {};
+    const question = room.question;
+    let actionArea = '';
+    if (room.phase === 'countdown') actionArea = '<div class="waiting-note">The first prompt is coming up.</div>';
+    else if (room.phase === 'submission') actionArea = bluff.submitted
+      ? `<div class="waiting-note" role="status">Your answer was received. Waiting for other players (${bluff.submitted_count}/${bluff.player_count}).</div>`
+      : `<label class="form-label" for="bluff-answer">Your fake answer</label><input class="field" id="bluff-answer" maxlength="120" autocomplete="off" placeholder="Write a believable answer"><button class="btn btn-primary btn-full" type="button" data-action="bluff-submit">Submit fake answer</button><p class="microcopy">Your answer stays hidden from other players during voting.</p>`;
+    else if (room.phase === 'voting') actionArea = `<p class="phase-instruction">Choose the answer you think is correct. Other fake-answer authors stay anonymous.</p><div class="answer-grid">${(bluff.choices||[]).map((choice,index)=>`<button class="answer-button ${choice.is_yours?'own-bluff':''}" type="button" data-action="bluff-vote" data-choice-id="${escapeHtml(choice.id)}" ${bluff.voted||choice.is_yours?'disabled':''}><span class="answer-letter">${String.fromCharCode(65+index)}</span><span>${escapeHtml(choice.text)}${choice.is_yours?' · Your answer (cannot vote)':''}</span></button>`).join('')}</div>${bluff.voted?'<div class="waiting-note" role="status">Vote received. Waiting for the reveal.</div>':''}`;
+    else if (room.phase === 'reveal') actionArea = `<div class="reveal-banner">Correct answer: ${escapeHtml(bluff.correct_answer)}</div><div class="bluff-results">${(bluff.results||[]).map(item=>`<article class="bluff-result ${item.correct?'correct':''}"><strong>${escapeHtml(item.text)}</strong><span>${item.correct?'Correct answer':`Fake answer by ${escapeHtml(item.author)}`}</span><small>${item.fooled_players.length?`Fooled: ${item.fooled_players.map(escapeHtml).join(', ')}`:'No players fooled'}</small></article>`).join('')}</div>`;
+    return `<section class="game-layout"><div class="quiz-card"><div class="quiz-head"><div class="quiz-tags"><span class="round-tag">ROUND ${String(room.round).padStart(2,'0')} / 10</span><span class="category-tag">${room.phase==='submission'?'WRITE':room.phase==='voting'?'VOTE':room.phase==='reveal'?'REVEAL':'READY'}</span></div>${phaseClock(room)}</div><h1 class="question-text">${escapeHtml(question?.prompt || 'Get ready for a prompt.')}</h1>${actionArea}</div>${leaderboard()}</section>`;
+  }
+  function escapeGame(room) {
+    const escape = room.escape || {};
+    const puzzle = escape.current_puzzle;
+    const countdown = room.phase === 'countdown';
+    const progress = (escape.rooms||[]).map(item=>`<div class="escape-room-node ${item.state}" aria-label="Room ${item.room}: ${item.state}"><span>${item.room}</span><small>${item.state==='solved'?'Solved':item.state==='current'?'Current':'Locked'}</small></div>`).join('');
+    const actionArea = countdown ? '<div class="waiting-note">Your team challenge starts in a moment.</div>' : puzzle ? `<div class="escape-progress"><strong>Room ${puzzle.room} · Puzzle ${puzzle.index+1} of 10</strong><span>${escape.solved_puzzles} puzzles solved</span></div><div class="escape-room-map">${progress}</div>${puzzle.hint?`<div class="hint-box" role="status"><strong>Team hint</strong><p>${escapeHtml(puzzle.hint)}</p></div>`:''}<label class="form-label" for="escape-answer">Team answer</label><input class="field" id="escape-answer" maxlength="200" autocomplete="off" placeholder="Enter your answer"><div class="escape-actions"><button class="btn btn-primary" type="button" data-action="escape-answer">Submit answer</button><button class="btn btn-secondary" type="button" data-action="escape-hint" ${escape.hints_remaining<=0||escape.hint_used?'disabled':''}>Use shared hint (${escape.hints_remaining} left)</button></div><p class="microcopy">One correct answer advances the shared team state. Wrong answers do not use hints.</p>` : '<div class="waiting-note">The team adventure is complete.</div>';
+    return `<section class="game-layout escape-game-layout"><div class="quiz-card"><div class="quiz-head"><div class="quiz-tags"><span class="round-tag">ESCAPE ROOM</span><span class="category-tag">${escape.solved_puzzles||0} / 10 SOLVED</span></div>${phaseClock(room)}</div>${puzzle?`<h1 class="question-text">${escapeHtml(puzzle.prompt)}</h1>`:'<h1 class="question-text">Work together to unlock every room.</h1>'}${actionArea}</div><aside class="rules-card escape-team-card"><h3>Team adventurers</h3><div class="player-list">${room.players.map(playerRow).join('')}</div><div class="rule-line"><span>Rooms cleared</span><strong>${escape.completed_rooms||0} / 5</strong></div><div class="rule-line"><span>Shared hints</span><strong>${escape.hints_remaining ?? 3}</strong></div><p class="microcopy">Everyone sees the same puzzle, hint, timer, and progress.</p></aside></section>`;
+  }
   function results() {
     const players = ranking();
+    if (state.room.mode === 'escape_room') {
+      const result = state.room.results || {};
+      const victory = result.outcome === 'victory';
+      return `<section class="results-card escape-results"><div class="winner-crown" aria-hidden="true">${victory?'✦':'⌛'}</div><div class="section-kicker">ESCAPE ROOM RESULTS</div><h2>${victory?'The team escaped!':'Time ran out.'}</h2><p class="results-copy">${result.team_outcome==='victory'?'Your team unlocked all five rooms.':'The team reached the end of the shared timer.'}</p><div class="escape-result-grid"><article><span>Rooms completed</span><strong>${result.completed_rooms} / 5</strong></article><article><span>Puzzles solved</span><strong>${result.solved_puzzles} / 10</strong></article><article><span>Hints remaining</span><strong>${result.remaining_hints}</strong></article><article><span>Elapsed time</span><strong>${Math.floor(result.elapsed_seconds/60)}:${String(result.elapsed_seconds%60).padStart(2,'0')}</strong></article></div>${state.playerId===state.room.host_id?'<div class="results-actions"><button class="btn btn-primary" type="button" data-action="rematch">Play again</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button></div>':'<div class="waiting-note">The host can start another adventure.</div>'}</section>`;
+    }
     const winner = players[0];
     const podium = players.slice(0, 3);
     const podiumOrder = podium.length === 3 ? [podium[1], podium[0], podium[2]] : podium;
@@ -513,7 +567,7 @@
     if (roundTag) roundTag.textContent = `ROUND ${String(Math.min(state.room.round, state.room.total_rounds)).padStart(2, '0')} / ${state.room.total_rounds}`;
     const resultsLabel = app.querySelector('.results-card .section-kicker');
     if (resultsLabel) resultsLabel.textContent = `${state.room.total_rounds} ROUNDS COMPLETE`;
-    if (phase === 'question' || phase === 'countdown' || phase === 'reveal') {
+    if (['question','countdown','reveal','submission','voting','escape_puzzle'].includes(phase)) {
       state.tick = setInterval(updateTimer, 100);
       updateTimer();
     }
@@ -523,10 +577,14 @@
     const ring = document.querySelector('#timer-ring');
     if (!number || !ring || !state.room?.deadline) return;
     const left = Math.max(0, (state.room.deadline - (Date.now() + (state.clockOffsetMs || 0))) / 1000);
-    const duration = state.room.phase === 'countdown' ? 3 : state.room.phase === 'reveal' ? 3 : Number(state.room.question_seconds || 15);
+    const duration = state.room.phase === 'countdown' ? 3
+      : state.room.phase === 'submission' ? 30
+        : state.room.phase === 'voting' ? 15
+          : state.room.phase === 'reveal' ? (state.room.mode === 'bluff_master' ? 5 : 3)
+            : state.room.phase === 'escape_puzzle' ? 900 : Number(state.room.question_seconds || 15);
     number.textContent = Math.ceil(left).toString();
     ring.style.setProperty('--progress', Math.min(1, left / duration).toString());
-    ring.classList.toggle('warning', left <= 5 && state.room.phase === 'question');
+    ring.classList.toggle('warning', left <= 5 && ['question','submission','voting','escape_puzzle'].includes(state.room.phase));
   }
   function leave() {
     if (state.socket) state.socket.close(1000, 'Player left the arena');
@@ -596,6 +654,18 @@
     } else if (action === 'start') send('start');
     else if (action === 'answer') send('answer', { choice: Number(target.dataset.choice) });
     else if (action === 'ability') send('ability', { ability: target.dataset.ability, request_id: crypto.randomUUID() });
+    else if (action === 'bluff-submit') {
+      const answer = document.querySelector('#bluff-answer')?.value || '';
+      if (!answer.trim()) { notify('Enter a fake answer first.'); return; }
+      send('bluff_submit', { answer, request_id: crypto.randomUUID() });
+    }
+    else if (action === 'bluff-vote') send('bluff_vote', { choice_id: target.dataset.choiceId, request_id: crypto.randomUUID() });
+    else if (action === 'escape-answer') {
+      const answer = document.querySelector('#escape-answer')?.value || '';
+      if (!answer.trim()) { notify('Enter the team answer first.'); return; }
+      send('escape_answer', { answer, puzzle_index: state.room.escape.current_puzzle.index, request_id: crypto.randomUUID() });
+    }
+    else if (action === 'escape-hint') send('escape_hint', { request_id: crypto.randomUUID() });
     else if (action === 'rematch') {
       if (state.room?.mode === 'solo_practice') state.soloReplayPending = true;
       send('rematch');

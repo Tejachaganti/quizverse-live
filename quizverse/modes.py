@@ -15,6 +15,8 @@ class GameMode(StrEnum):
     SOLO_PRACTICE = "solo_practice"
     QUIZ_ROYALE = "quiz_royale"
     POWER_PLAY = "power_play"
+    BLUFF_MASTER = "bluff_master"
+    ESCAPE_ROOM = "escape_room"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,8 @@ class ModeConfig:
     royale: bool = False
     power_play: bool = False
     starting_lives: int = 0
+    bluff_master: bool = False
+    escape_room: bool = False
 
     def __post_init__(self) -> None:
         if not 1 <= self.min_players <= self.max_players <= (20 if self.royale else 8):
@@ -151,6 +155,22 @@ POWER_PLAY_CONFIG = ModeConfig(
     power_play=True,
 )
 
+BLUFF_MASTER_CONFIG = ModeConfig(
+    mode=GameMode.BLUFF_MASTER, min_players=3, max_players=8, question_count=10,
+    countdown_seconds=3.0, question_seconds=30.0, reveal_seconds=5.0,
+    base_points=1000, speed_bonus_max=0, momentum_enabled=False,
+    momentum_gap_points=0, momentum_speed_seconds=0.0, momentum_bonus_points=0,
+    bluff_master=True,
+)
+
+ESCAPE_ROOM_CONFIG = ModeConfig(
+    mode=GameMode.ESCAPE_ROOM, min_players=2, max_players=8, question_count=10,
+    countdown_seconds=3.0, question_seconds=900.0, reveal_seconds=5.0,
+    base_points=0, speed_bonus_max=0, momentum_enabled=False,
+    momentum_gap_points=0, momentum_speed_seconds=0.0, momentum_bonus_points=0,
+    escape_room=True,
+)
+
 _SUPPORTED_MODES = MappingProxyType(
     {
         GameMode.CLASSIC: CLASSIC_CONFIG,
@@ -160,6 +180,8 @@ _SUPPORTED_MODES = MappingProxyType(
         GameMode.SOLO_PRACTICE: SOLO_PRACTICE_CONFIG,
         GameMode.QUIZ_ROYALE: QUIZ_ROYALE_CONFIG,
         GameMode.POWER_PLAY: POWER_PLAY_CONFIG,
+        GameMode.BLUFF_MASTER: BLUFF_MASTER_CONFIG,
+        GameMode.ESCAPE_ROOM: ESCAPE_ROOM_CONFIG,
     }
 )
 

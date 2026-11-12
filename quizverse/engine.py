@@ -13,6 +13,8 @@ from typing import Callable
 
 from quizverse.modes import CLASSIC_CONFIG, ModeConfig, TEAM_BATTLE_CONFIG, GameMode, resolve_mode
 from quizverse.questions import QUESTIONS, Question
+from quizverse.special_questions import BLUFF_QUESTIONS, ESCAPE_QUESTIONS
+from quizverse.question_content import normalize_open_answer, open_answer_matches
 from quizverse.preferences import PlayerPreferences
 from quizverse.question_intelligence import SelectionFilters, select_questions
 from quizverse.taxonomy import CATEGORIES
@@ -38,6 +40,9 @@ class Phase(StrEnum):
     QUESTION = "question"
     REVEAL = "reveal"
     RESULTS = "results"
+    SUBMISSION = "submission"
+    VOTING = "voting"
+    ESCAPE_PUZZLE = "escape_puzzle"
 
 
 class GameError(Exception):
@@ -112,6 +117,17 @@ class Room:
     elimination_end_reason: str | None = None
     terminal_elimination_round: int | None = None
     selection: dict[str, object] = field(default_factory=dict)
+    bluff_submissions: dict[str, str] = field(default_factory=dict)
+    bluff_options: list[dict[str, object]] = field(default_factory=list)
+    bluff_votes: dict[str, str] = field(default_factory=dict)
+    bluff_request_ids: set[str] = field(default_factory=set)
+    escape_hints_remaining: int = 3
+    escape_active_hint: str | None = None
+    escape_request_ids: set[str] = field(default_factory=set)
+    escape_hinted_puzzles: set[int] = field(default_factory=set)
+    escape_attempts: dict[str, tuple[int, float]] = field(default_factory=dict)
+    escape_started_at: float | None = None
+    escape_completed_at: float | None = None
 
 
 class GameEngine:
@@ -476,6 +492,10 @@ class GameEngine:
             return "Quiz Royale needs at least four connected players."
         if room.match_config.mode == GameMode.SOLO_PRACTICE and (len(room.players) != 1 or not any(player.connected for player in room.players.values())):
             return "Solo Practice needs exactly one connected player."
+        if room.match_config.bluff_master and sum(player.connected for player in room.players.values()) < 3:
+            return "Bluff Master needs at least three connected players."
+        if room.match_config.escape_room and sum(player.connected for player in room.players.values()) < 2:
+            return "Escape Room needs at least two connected players."
         if room.match_config.mode == GameMode.TEAM_BATTLE:
             now = self._monotonic()
             roster_size = sum(
@@ -494,18 +514,91 @@ class GameEngine:
             return "Waiting for at least one more connected player."
         return None
 
+    @staticmethod
+    def _valid_escape_set(candidates: list[Question]) -> bool:
+        if len(candidates) != 10:
+            return False
+        by_id = {question.id: question for question in candidates}
+        if len(by_id) != 10:
+            return False
+        payloads = [question.format_payload for question in candidates]
+        if any(not isinstance(payload, dict) for payload in payloads):
+            return False
+        indexes = [payload.get("puzzle_index") for payload in payloads if isinstance(payload, dict)]
+        if set(indexes) != set(range(10)):
+            return False
+        for question in candidates:
+            payload = question.format_payload or {}
+            index = payload.get("puzzle_index")
+            room_index = payload.get("room_index")
+            if room_index != (index // 2 + 1) or not str(payload.get("solution", "")).strip():
+                return False
+            dependencies = payload.get("dependencies", [])
+            if not isinstance(dependencies, list) or any(dependency not in by_id or dependency == question.id for dependency in dependencies):
+                return False
+            if any(
+                int((by_id[dependency].format_payload or {}).get("puzzle_index", 99)) >= int(index)
+                for dependency in dependencies
+            ):
+                return False
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(question_id: str) -> bool:
+            if question_id in visiting:
+                return False
+            if question_id in visited:
+                return True
+            visiting.add(question_id)
+            payload = by_id[question_id].format_payload or {}
+            for dependency in payload.get("dependencies", []):
+                if not visit(dependency):
+                    return False
+            visiting.remove(question_id)
+            visited.add(question_id)
+            return True
+
+        return all(visit(question_id) for question_id in by_id)
+
+    @classmethod
+    def _select_escape_puzzle_set(cls, inventory: tuple[Question, ...], filters: SelectionFilters) -> tuple[Question, ...]:
+        groups: dict[str, list[Question]] = {}
+        for question in inventory:
+            payload = question.format_payload or {}
+            set_id = payload.get("puzzle_set_id")
+            if question.question_format == "puzzle" and isinstance(set_id, str):
+                groups.setdefault(set_id, []).append(question)
+        valid_groups = [group for group in groups.values() if cls._valid_escape_set(group)]
+        if not valid_groups:
+            raise ValueError("No complete reviewed Escape Room puzzle set is available (five rooms and ten linked puzzles are required).")
+        errors: list[str] = []
+        for group in valid_groups:
+            try:
+                selected = select_questions(group, filters)
+            except (ValueError, TypeError) as error:
+                errors.append(str(error))
+                continue
+            ordered = tuple(sorted(selected, key=lambda item: int((item.format_payload or {}).get("puzzle_index", -1))))
+            return ordered
+        detail = errors[0] if errors else "No complete puzzle set matches the selected filters."
+        raise ValueError(detail)
+
     def _snapshot(self, room: Room, viewer_id: str) -> dict[str, object]:
         viewer = room.players.get(viewer_id)
         question = room.questions[room.round_index] if room.round_index < len(room.questions) else None
         players = sorted(room.players.values(), key=lambda p: (-p.score, -p.correct, p.name.casefold()))
         public_question = None
-        if room.phase in (Phase.QUESTION, Phase.REVEAL) and question:
+        if room.phase in (Phase.QUESTION, Phase.REVEAL) and question and question.question_format == "multiple_choice":
             public_question = {"category": question.category, "prompt": question.prompt, "options": list(question.options)}
             if room.match_config.power_play and room.phase == Phase.QUESTION and viewer and viewer.power_fifty_round == room.round_index:
                 public_question["visible_choices"] = list(viewer.power_fifty_choices)
                 public_question["options"] = [option if index in viewer.power_fifty_choices else "" for index, option in enumerate(question.options)]
+        if room.match_config.bluff_master and room.phase in {Phase.SUBMISSION, Phase.VOTING, Phase.REVEAL} and question:
+            public_question = {"category": question.category, "prompt": question.prompt, "format": "open_ended"}
+        if room.match_config.escape_room and room.phase == Phase.ESCAPE_PUZZLE and question:
+            public_question = {"category": question.category, "prompt": question.prompt, "format": "puzzle"}
         feedback = None
-        if room.phase == Phase.REVEAL and viewer and question:
+        if room.phase == Phase.REVEAL and viewer and question and question.question_format == "multiple_choice":
             feedback = {
                 "selected": viewer.answer.choice if viewer.answer and viewer.answer.choice >= 0 else None,
                 "correct": question.answer,
@@ -527,7 +620,10 @@ class GameEngine:
             public_players, elimination_summary = self._elimination_results(room)
         result_data = None
         if room.phase == Phase.RESULTS:
-            if room.match_config.mode == GameMode.SOLO_PRACTICE and viewer is not None:
+            if room.match_config.escape_room:
+                outcome = "victory" if room.round_index >= 10 else "failure"
+                result_data = self._escape_results(room, outcome)
+            elif room.match_config.mode == GameMode.SOLO_PRACTICE and viewer is not None:
                 result_data = {"practice_summary": self._practice_summary(room, viewer)}
             else:
                 result_data = {
@@ -572,6 +668,8 @@ class GameEngine:
             "answered": bool(viewer and viewer.answer is not None and viewer.answer.choice >= 0),
             **({"max_players": room.match_config.max_players} if room.match_config.royale else {}),
             **({"power_play": self._power_snapshot(room, viewer)} if room.match_config.power_play and viewer else {}),
+            **({"bluff": self._bluff_snapshot(room, viewer)} if room.match_config.bluff_master else {}),
+            **({"escape": self._escape_snapshot(room)} if room.match_config.escape_room else {}),
             "answer_feedback": feedback,
             "momentum": {
                 "enabled": room.match_config.momentum_enabled,
@@ -587,7 +685,66 @@ class GameEngine:
                 if result_data is not None else None
             ),
             "can_start": can_start,
-            **({"can_start_reason": self._can_start_reason(room)} if room.match_config.mode in {GameMode.TEAM_BATTLE, GameMode.SOLO_PRACTICE} or room.match_config.elimination else {}),
+            **({"can_start_reason": self._can_start_reason(room)} if room.match_config.mode in {GameMode.TEAM_BATTLE, GameMode.SOLO_PRACTICE} or room.match_config.elimination or room.match_config.bluff_master or room.match_config.escape_room else {}),
+        }
+
+    def _bluff_snapshot(self, room: Room, viewer: Player | None) -> dict[str, object]:
+        data: dict[str, object] = {
+            "submitted": bool(viewer and viewer.id in room.bluff_submissions),
+            "submitted_count": len(room.bluff_submissions),
+            "player_count": len(room.players),
+            "voted": bool(viewer and viewer.id in room.bluff_votes),
+        }
+        if viewer and room.phase == Phase.SUBMISSION and viewer.id in room.bluff_submissions:
+            data["your_submission"] = room.bluff_submissions[viewer.id]
+        if room.phase == Phase.VOTING:
+            data["choices"] = [
+                {"id": item["id"], "text": item["text"], "is_yours": bool(viewer and item.get("author_id") == viewer.id)}
+                for item in room.bluff_options
+            ]
+        if room.phase == Phase.REVEAL:
+            question = room.questions[room.round_index]
+            payload = question.format_payload or {}
+            data["correct_answer"] = payload.get("canonical_answer")
+            data["results"] = [
+                {
+                    "text": option["text"],
+                    "correct": bool(option["is_correct"]),
+                    "author": "Correct answer" if option["is_correct"] else room.players[str(option["author_id"])].name,
+                    "fooled_players": [
+                        room.players[voter_id].name
+                        for voter_id, selected_id in room.bluff_votes.items()
+                        if selected_id == option["id"]
+                    ],
+                }
+                for option in room.bluff_options
+            ]
+        return data
+
+    def _escape_snapshot(self, room: Room) -> dict[str, object]:
+        solved = min(room.round_index, 10)
+        current = room.questions[room.round_index] if room.phase == Phase.ESCAPE_PUZZLE and room.round_index < 10 else None
+        rooms = [
+            {"room": index, "state": "solved" if solved >= index * 2 else "current" if solved >= (index - 1) * 2 and solved < index * 2 else "locked"}
+            for index in range(1, 6)
+        ]
+        puzzle = None
+        if current is not None:
+            payload = current.format_payload or {}
+            puzzle = {
+                "index": room.round_index,
+                "room": int(payload.get("room_index", room.round_index // 2 + 1)),
+                "prompt": current.prompt,
+                "hint": room.escape_active_hint,
+            }
+        return {
+            "rooms": rooms,
+            "completed_rooms": solved // 2,
+            "solved_puzzles": solved,
+            "total_puzzles": 10,
+            "hints_remaining": room.escape_hints_remaining,
+            "hint_used": room.escape_active_hint is not None,
+            "current_puzzle": puzzle,
         }
 
     def _joined(self, room: Room, player: Player, token: str) -> dict[str, object]:
@@ -610,6 +767,8 @@ class GameEngine:
                 question_count = match_config.question_count
             if isinstance(question_count, bool) or not isinstance(question_count, int) or not 1 <= question_count <= 20:
                 raise GameError("invalid_question_count", "Question count must be between 1 and 20.")
+            if (match_config.bluff_master or match_config.escape_room) and question_count != 10:
+                raise GameError("invalid_question_count", "Bluff Master and Escape Room use exactly ten rounds or puzzles.")
             configured = match_config if question_count == match_config.question_count else replace(match_config, question_count=question_count)
             room = Room(
                 code=code,
@@ -695,7 +854,14 @@ class GameEngine:
                 if sum(player.connected for player in room.players.values()) < room.match_config.min_players:
                     raise GameError("not_enough_players", "At least four players must be connected to start Team Battle.")
             elif sum(player.connected for player in room.players.values()) < room.match_config.min_players:
-                message = "At least four connected players are needed to start Quiz Royale." if room.match_config.royale else "At least two connected players are needed to start."
+                if room.match_config.royale:
+                    message = "At least four connected players are needed to start Quiz Royale."
+                elif room.match_config.bluff_master:
+                    message = "At least three connected players are needed to start Bluff Master."
+                elif room.match_config.escape_room:
+                    message = "At least two connected players are needed to start Escape Room."
+                else:
+                    message = "At least two connected players are needed to start."
                 raise GameError("not_enough_players", message)
             if room.match_config.mode == GameMode.TEAM_BATTLE:
                 roster = tuple(room.players)
@@ -713,31 +879,43 @@ class GameEngine:
                 })
                 source = str(room.selection.get("content_scope", "built_in"))
                 if source == "built_in" and self._question_provider is None:
-                    inventory = self._question_bank
+                    inventory = self._question_bank + BLUFF_QUESTIONS + ESCAPE_QUESTIONS
                 elif self._question_provider is not None:
-                    inventory = self._question_provider(room.selection)
+                    inventory = self._question_provider({**room.selection, "mode": room.match_config.mode.value})
                 else:
                     raise ValueError("Quiz Library selection is unavailable in this game server.")
-                eligible = select_questions(
-                    inventory,
-                    SelectionFilters(
+                selection_filters = SelectionFilters(
                         count=room.match_config.question_count,
                         difficulty=preferences.difficulty,
                         language=preferences.language,
                         learning_preset=preferences.learning_preset,
                         categories=frozenset(room.selection.get("categories", [])),
                         exam_collection_id=room.selection.get("exam_collection_id") if isinstance(room.selection.get("exam_collection_id"), str) else None,
-                        question_format="multiple_choice",
+                        question_format=("open_ended" if room.match_config.bluff_master else "puzzle" if room.match_config.escape_room else "multiple_choice"),
+                        enforce_reviewed=room.match_config.bluff_master or room.match_config.escape_room,
                         parent_by_id=parent_by_id,
                         topic_preferences=preferences.topics,
-                    ),
-                )
-                room.questions = tuple(eligible)
+                    )
+                if room.match_config.escape_room:
+                    room.questions = self._select_escape_puzzle_set(inventory, selection_filters)
+                else:
+                    room.questions = tuple(select_questions(inventory, selection_filters))
             except PermissionError as error:
                 raise GameError("content_not_authorized", str(error)) from error
             except (ValueError, TypeError) as error:
                 raise GameError("insufficient_inventory", str(error)) from error
             room.round_index = 0
+            room.bluff_submissions.clear()
+            room.bluff_options.clear()
+            room.bluff_votes.clear()
+            room.bluff_request_ids.clear()
+            room.escape_hints_remaining = 3
+            room.escape_active_hint = None
+            room.escape_request_ids.clear()
+            room.escape_hinted_puzzles.clear()
+            room.escape_attempts.clear()
+            room.escape_started_at = None
+            room.escape_completed_at = None
             for player in room.players.values():
                 player.score = 0
                 player.correct = 0
@@ -767,6 +945,21 @@ class GameEngine:
             return self._snapshot(room, player_id)
 
     def _show_question(self, room: Room, *, started_at: float | None = None) -> None:
+        if room.match_config.bluff_master:
+            room.phase = Phase.SUBMISSION
+            room.question_started_at = self._monotonic() if started_at is None else started_at
+            room.bluff_submissions.clear()
+            room.bluff_options.clear()
+            room.bluff_votes.clear()
+            self._set_deadline_at(room, room.question_started_at + 30.0)
+            return
+        if room.match_config.escape_room:
+            room.phase = Phase.ESCAPE_PUZZLE
+            if room.escape_started_at is None:
+                room.escape_started_at = self._monotonic() if started_at is None else started_at
+            room.question_started_at = room.escape_started_at
+            self._set_deadline_at(room, room.escape_started_at + 900.0)
+            return
         room.phase = Phase.QUESTION
         room.question_started_at = self._monotonic() if started_at is None else started_at
         for player in room.players.values():
@@ -782,6 +975,57 @@ class GameEngine:
         else:
             room.momentum_eligible_ids.clear()
         self._set_deadline_at(room, room.question_started_at + room.match_config.question_seconds)
+
+    def _begin_bluff_voting(self, room: Room, *, started_at: float | None = None) -> None:
+        question = room.questions[room.round_index]
+        payload = question.format_payload or {}
+        real_answer = str(payload.get("canonical_answer", "")).strip()
+        options: list[dict[str, object]] = [
+            {"id": secrets.token_urlsafe(12), "text": real_answer, "is_correct": True, "author_id": None}
+        ]
+        options.extend(
+            {"id": secrets.token_urlsafe(12), "text": answer, "is_correct": False, "author_id": author_id}
+            for author_id, answer in room.bluff_submissions.items()
+        )
+        secrets.SystemRandom().shuffle(options)
+        room.bluff_options = options
+        room.bluff_votes.clear()
+        room.phase = Phase.VOTING
+        started = self._monotonic() if started_at is None else started_at
+        self._set_deadline_at(room, started + 15.0)
+
+    def _reveal_bluff_results(self, room: Room, *, started_at: float | None = None) -> None:
+        by_id = {str(option["id"]): option for option in room.bluff_options}
+        for voter_id, option_id in room.bluff_votes.items():
+            option = by_id.get(option_id)
+            voter = room.players.get(voter_id)
+            if option is None or voter is None:
+                continue
+            if option["is_correct"]:
+                voter.score += 1000
+                voter.correct += 1
+            else:
+                author = room.players.get(str(option["author_id"]))
+                if author is not None:
+                    author.score += 500
+        room.phase = Phase.REVEAL
+        started = self._monotonic() if started_at is None else started_at
+        self._set_deadline_at(room, started + 5.0)
+
+    def _escape_results(self, room: Room, outcome: str) -> dict[str, object]:
+        elapsed = 0
+        if room.escape_started_at is not None:
+            finished_at = room.escape_completed_at if room.escape_completed_at is not None else self._monotonic()
+            elapsed = max(0, int(finished_at - room.escape_started_at))
+        solved = min(room.round_index, 10)
+        return {
+            "outcome": outcome,
+            "completed_rooms": solved // 2,
+            "solved_puzzles": solved,
+            "remaining_hints": room.escape_hints_remaining,
+            "elapsed_seconds": elapsed,
+            "team_outcome": "victory" if outcome == "victory" else "failure",
+        }
 
     def _reveal(self, room: Room, *, started_at: float | None = None) -> None:
         room.phase = Phase.REVEAL
@@ -879,10 +1123,27 @@ class GameEngine:
             transition_at = room.deadline
             if room.phase == Phase.COUNTDOWN:
                 self._show_question(room, started_at=transition_at)
+            elif room.phase == Phase.SUBMISSION and room.match_config.bluff_master:
+                self._begin_bluff_voting(room, started_at=transition_at)
+            elif room.phase == Phase.VOTING and room.match_config.bluff_master:
+                self._reveal_bluff_results(room, started_at=transition_at)
+            elif room.phase == Phase.ESCAPE_PUZZLE and room.match_config.escape_room:
+                room.phase = Phase.RESULTS
+                room.escape_completed_at = transition_at
+                room.deadline = None
+                room.deadline_epoch_ms = None
             elif room.phase == Phase.QUESTION:
                 self._reveal(room, started_at=transition_at)
             elif room.phase == Phase.REVEAL:
-                if room.match_config.elimination:
+                if room.match_config.bluff_master:
+                    room.round_index += 1
+                    if room.round_index >= room.match_config.question_count:
+                        room.phase = Phase.RESULTS
+                        room.deadline = None
+                        room.deadline_epoch_ms = None
+                    else:
+                        self._show_question(room, started_at=transition_at)
+                elif room.match_config.elimination:
                     survivors = [player for player in room.players.values() if not player.eliminated]
                     if len(survivors) <= 1:
                         room.phase = Phase.RESULTS
@@ -960,6 +1221,133 @@ class GameEngine:
             self._touch(room)
             return self._snapshot(room, player_id)
 
+    async def submit_bluff(self, room_code: str, player_id: str, answer: object, request_id: object) -> dict[str, object]:
+        async with self._lock:
+            room, player = self._get_room_player(room_code, player_id)
+            if not room.match_config.bluff_master:
+                raise GameError("wrong_mode", "Fake answers are only available in Bluff Master.")
+            changed = self._advance_room(room, self._monotonic())
+            if room.phase != Phase.SUBMISSION:
+                raise GameError("wrong_phase", "The fake-answer phase is closed.", state_changed=changed)
+            if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", request_id):
+                raise GameError("invalid_request", "Submit a valid action ID.")
+            request_key = f"submit:{request_id}"
+            if request_key in room.bluff_request_ids:
+                raise GameError("replayed_action", "This fake answer request was already used.")
+            if player_id in room.bluff_submissions:
+                raise GameError("duplicate_submission", "You already submitted a fake answer this round.")
+            if not isinstance(answer, str):
+                raise GameError("invalid_answer", "Enter a text answer between 2 and 120 characters.")
+            answer = answer.strip()
+            if not 2 <= len(answer) <= 120 or any(ord(char) < 32 and char not in "\t" for char in answer):
+                raise GameError("invalid_answer", "Enter a text answer between 2 and 120 characters.")
+            question = room.questions[room.round_index]
+            payload = question.format_payload or {}
+            if open_answer_matches(payload, answer):
+                raise GameError("duplicate_answer", "That matches the real answer. Try a different fake answer.")
+            normalized = normalize_open_answer(answer)
+            if any(normalize_open_answer(existing) == normalized for existing in room.bluff_submissions.values()):
+                raise GameError("duplicate_answer", "Another player already submitted that answer. Try a different one.")
+            room.bluff_request_ids.add(request_key)
+            room.bluff_submissions[player_id] = answer
+            if all(candidate.id in room.bluff_submissions or not candidate.connected for candidate in room.players.values()):
+                self._begin_bluff_voting(room)
+            self._touch(room)
+            return self._snapshot(room, player_id)
+
+    async def cast_bluff_vote(self, room_code: str, player_id: str, choice_id: object, request_id: object) -> dict[str, object]:
+        async with self._lock:
+            room, _ = self._get_room_player(room_code, player_id)
+            if not room.match_config.bluff_master:
+                raise GameError("wrong_mode", "Voting is only available in Bluff Master.")
+            changed = self._advance_room(room, self._monotonic())
+            if room.phase != Phase.VOTING:
+                raise GameError("wrong_phase", "The voting phase is closed.", state_changed=changed)
+            if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", request_id):
+                raise GameError("invalid_request", "Submit a valid action ID.")
+            request_key = f"vote:{request_id}"
+            if request_key in room.bluff_request_ids:
+                raise GameError("replayed_action", "This vote request was already used.")
+            if player_id in room.bluff_votes:
+                raise GameError("duplicate_vote", "Your vote is already locked for this round.")
+            option = next((item for item in room.bluff_options if item.get("id") == choice_id), None)
+            if option is None:
+                raise GameError("invalid_vote", "Choose one of the displayed answers.")
+            if option.get("author_id") == player_id:
+                raise GameError("self_vote", "You cannot vote for your own fake answer.")
+            room.bluff_request_ids.add(request_key)
+            room.bluff_votes[player_id] = str(choice_id)
+            if all(candidate.id in room.bluff_votes or not candidate.connected for candidate in room.players.values()):
+                self._reveal_bluff_results(room)
+            self._touch(room)
+            return self._snapshot(room, player_id)
+
+    async def submit_escape_answer(self, room_code: str, player_id: str, answer: object, puzzle_index: object, request_id: object) -> dict[str, object]:
+        async with self._lock:
+            room, _ = self._get_room_player(room_code, player_id)
+            if not room.match_config.escape_room:
+                raise GameError("wrong_mode", "Puzzle answers are only available in Escape Room.")
+            changed = self._advance_room(room, self._monotonic())
+            if room.phase != Phase.ESCAPE_PUZZLE:
+                raise GameError("wrong_phase", "The Escape Room puzzle is closed.", state_changed=changed)
+            if isinstance(puzzle_index, bool) or not isinstance(puzzle_index, int) or puzzle_index != room.round_index:
+                raise GameError("stale_puzzle", "That puzzle has already changed. Use the current puzzle.")
+            if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", request_id):
+                raise GameError("invalid_request", "Submit a valid action ID.")
+            request_key = f"answer:{request_id}"
+            if request_key in room.escape_request_ids:
+                raise GameError("replayed_action", "This puzzle-answer request was already used.")
+            if not isinstance(answer, str) or not 1 <= len(answer.strip()) <= 200 or any(ord(char) < 32 and char not in "\t" for char in answer):
+                raise GameError("invalid_answer", "Enter an answer between 1 and 200 characters.")
+            now = self._monotonic()
+            previous = room.escape_attempts.get(player_id)
+            if previous and previous[0] == room.round_index and now - previous[1] < 0.75:
+                raise GameError("rate_limited", "Wait a moment before trying another answer.")
+            room.escape_request_ids.add(request_key)
+            room.escape_attempts[player_id] = (room.round_index, now)
+            question = room.questions[room.round_index]
+            payload = question.format_payload or {}
+            normalized = normalize_open_answer(answer)
+            accepted = {normalize_open_answer(str(payload.get("solution", "")))}
+            accepted.update(normalize_open_answer(item) for item in payload.get("accepted_aliases", []) if isinstance(item, str))
+            if normalized in accepted:
+                room.round_index += 1
+                room.escape_active_hint = None
+                if room.round_index == 10:
+                    room.phase = Phase.RESULTS
+                    room.escape_completed_at = now
+                    room.deadline = None
+                    room.deadline_epoch_ms = None
+            self._touch(room)
+            return self._snapshot(room, player_id)
+
+    async def request_escape_hint(self, room_code: str, player_id: str, request_id: object) -> dict[str, object]:
+        async with self._lock:
+            room, _ = self._get_room_player(room_code, player_id)
+            if not room.match_config.escape_room:
+                raise GameError("wrong_mode", "Shared hints are only available in Escape Room.")
+            changed = self._advance_room(room, self._monotonic())
+            if room.phase != Phase.ESCAPE_PUZZLE:
+                raise GameError("wrong_phase", "Hints are unavailable after the adventure ends.", state_changed=changed)
+            if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,64}", request_id):
+                raise GameError("invalid_request", "Submit a valid action ID.")
+            if request_id in room.escape_request_ids:
+                raise GameError("replayed_action", "This hint request was already used.")
+            if room.escape_hints_remaining <= 0:
+                raise GameError("no_hints", "The team has used all three shared hints.")
+            if room.round_index in room.escape_hinted_puzzles:
+                raise GameError("hint_already_used", "The team has already used a hint for this puzzle.")
+            payload = room.questions[room.round_index].format_payload or {}
+            hint = payload.get("hint")
+            if not isinstance(hint, str) or not hint.strip():
+                raise GameError("hint_unavailable", "No hint is available for this puzzle.")
+            room.escape_request_ids.add(request_id)
+            room.escape_hinted_puzzles.add(room.round_index)
+            room.escape_hints_remaining -= 1
+            room.escape_active_hint = hint
+            self._touch(room)
+            return self._snapshot(room, player_id)
+
     async def activate_ability(self, room_code: str, player_id: str, ability: str, request_id: str) -> dict[str, object]:
         async with self._lock:
             room, player = self._get_room_player(room_code, player_id)
@@ -1004,7 +1392,12 @@ class GameEngine:
                 raise GameError("host_only", "Only the host can change the arena after a game.")
             if room.phase != Phase.RESULTS:
                 raise GameError("wrong_phase", "The quiz must finish before returning to the lobby.")
-            if room.match_config.mode == GameMode.TEAM_BATTLE or room.match_config.elimination:
+            if (
+                room.match_config.mode == GameMode.TEAM_BATTLE
+                or room.match_config.elimination
+                or room.match_config.bluff_master
+                or room.match_config.escape_room
+            ):
                 self._prune_expired_players(room, self._monotonic())
             room.phase = Phase.WAITING
             room.questions = ()
@@ -1012,6 +1405,17 @@ class GameEngine:
             room.deadline = None
             room.deadline_epoch_ms = None
             room.question_started_at = None
+            room.bluff_submissions.clear()
+            room.bluff_options.clear()
+            room.bluff_votes.clear()
+            room.bluff_request_ids.clear()
+            room.escape_hints_remaining = 3
+            room.escape_active_hint = None
+            room.escape_request_ids.clear()
+            room.escape_hinted_puzzles.clear()
+            room.escape_attempts.clear()
+            room.escape_started_at = None
+            room.escape_completed_at = None
             for player in room.players.values():
                 player.score = 0
                 player.correct = 0
@@ -1057,7 +1461,15 @@ class GameEngine:
             for code, room in list(self._rooms.items()):
                 for player_id, player in list(room.players.items()):
                     if not player.connected and player.disconnected_at is not None and now - player.disconnected_at > RECONNECT_SECONDS:
-                        if (room.match_config.mode == GameMode.TEAM_BATTLE or room.match_config.elimination) and room.phase != Phase.WAITING:
+                        if (
+                            room.phase != Phase.WAITING
+                            and (
+                                room.match_config.mode == GameMode.TEAM_BATTLE
+                                or room.match_config.elimination
+                                or room.match_config.bluff_master
+                                or room.match_config.escape_room
+                            )
+                        ):
                             player.reconnect_expired = True
                             self._sessions.pop(player.token_hash, None)
                         else:

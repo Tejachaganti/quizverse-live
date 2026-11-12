@@ -14,6 +14,7 @@ from pathlib import Path
 from playwright.sync_api import BrowserContext, Page, expect, sync_playwright
 
 from quizverse.questions import QUESTIONS
+from quizverse.special_questions import ESCAPE_QUESTIONS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
@@ -234,6 +235,8 @@ def run_browser_sessions(origin: str) -> None:
         run_solo_practice(browser, origin)
         run_quiz_royale(browser, origin)
         run_power_play(browser, origin)
+        run_bluff_master(browser, origin)
+        run_escape_room(browser, origin)
 
         desktop.close()
         mobile.close()
@@ -711,6 +714,123 @@ def run_power_play(browser, origin: str) -> None:
         expect(guest.locator(".final-row")).to_have_count(2)
         assert_no_horizontal_overflow(guest)
         print("PASS: desktop/mobile Power Play match exercised private 50:50, Double Points scoring, Shield consumption, energy snapshots, and completed all ten rounds")
+    finally:
+        host_context.close()
+        guest_context.close()
+
+
+def run_bluff_master(browser, origin: str) -> None:
+    contexts = [browser.new_context(viewport={"width": 1280, "height": 850}), browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True), browser.new_context(viewport={"width": 820, "height": 1024})]
+    pages = [context.new_page() for context in contexts]
+    states: list[list[dict]] = [[] for _ in pages]
+    host, *guests = pages
+    try:
+        for page, captured in zip(pages, states):
+            page.set_default_timeout(7000)
+            page.on("websocket", lambda ws, target=captured: ws.on("framereceived", lambda payload: capture_state(target, payload)))
+            page.goto(origin, wait_until="domcontentloaded")
+        host.locator("#player-name").fill("Bluff Host")
+        host.locator("#game-mode").select_option("bluff_master")
+        expect(host.locator("#match-count")).to_have_value("10")
+        expect(host.locator("#match-count")).to_be_disabled()
+        host.locator('[data-action="create"]').click()
+        code = host.locator(".room-code").inner_text()
+        for index, page in enumerate(guests, start=1):
+            page.locator("#player-name").fill(f"Bluff {index}")
+            page.locator('[data-action="join"]').click()
+            page.locator("#room-code").fill(code)
+            page.locator('[data-action="confirm-join"]').click()
+        expect(host.locator(".player-row")).to_have_count(3)
+        host.locator('[data-action="start"]').click()
+        expect(host.locator("#bluff-answer")).to_be_visible(timeout=8000)
+        previous_round = 0
+        for round_index in range(10):
+            if round_index:
+                expect(host.locator("#bluff-answer")).to_be_visible(timeout=8000)
+            for index, page in enumerate(pages):
+                page.locator("#bluff-answer").fill(f"invented response {round_index} from player {index}")
+                page.locator('[data-action="bluff-submit"]').click()
+            for page in pages:
+                expect(page.locator("[data-action='bluff-vote']").first).to_be_visible(timeout=6000)
+                assert_no_horizontal_overflow(page)
+            captured = next(item for item in reversed(states[0]) if item.get("phase") == "voting")
+            assert captured["mode"] == "bluff_master"
+            assert len(captured["bluff"]["choices"]) == 4
+            assert all("author_id" not in choice and "is_correct" not in choice for choice in captured["bluff"]["choices"])
+            assert "correct_answer" not in captured["bluff"]
+            for page, current in zip(pages, states):
+                state = next(item for item in reversed(current) if item.get("phase") == "voting")
+                own = next(item for item in state["bluff"]["choices"] if item["is_yours"])
+                own_button = page.locator(f"[data-choice-id='{own['id']}']")
+                expect(own_button).to_be_disabled()
+                page.locator('[data-action="bluff-vote"]:not(:disabled)').first.click()
+            for page in pages:
+                expect(page.locator(".bluff-results")).to_be_visible(timeout=6000)
+                expect(page.locator(".bluff-results")).to_contain_text("Fake answer by", timeout=6000)
+            previous_round = round_index + 1
+        expect(host.locator(".results-card")).to_be_visible(timeout=8000)
+        assert previous_round == 10
+        host.locator('[data-action="rematch"]').click()
+        expect(host.locator("[data-action='start']")).to_be_enabled(timeout=5000)
+        print("PASS: desktop/mobile/tablet Bluff Master completed ten rounds; fake answers stayed anonymous during voting, own answer was disabled, votes revealed authors and scores, and rematch returned to lobby")
+    finally:
+        for context in contexts:
+            context.close()
+
+
+def run_escape_room(browser, origin: str) -> None:
+    host_context = browser.new_context(viewport={"width": 1280, "height": 850})
+    guest_context = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+    host, guest = host_context.new_page(), guest_context.new_page()
+    states: list[list[dict]] = [[], []]
+    for page, captured in ((host, states[0]), (guest, states[1])):
+        page.set_default_timeout(7000)
+        page.on("websocket", lambda ws, target=captured: ws.on("framereceived", lambda payload: capture_state(target, payload)))
+    try:
+        host.goto(origin, wait_until="domcontentloaded")
+        guest.goto(origin, wait_until="domcontentloaded")
+        host.locator("#player-name").fill("Escape Host")
+        host.locator("#game-mode").select_option("escape_room")
+        expect(host.locator("#match-count")).to_have_value("10")
+        expect(host.locator("#match-count")).to_be_disabled()
+        host.locator('[data-action="create"]').click()
+        code = host.locator(".room-code").inner_text()
+        guest.locator("#player-name").fill("Escape Guest")
+        guest.locator('[data-action="join"]').click()
+        guest.locator("#room-code").fill(code)
+        guest.locator('[data-action="confirm-join"]').click()
+        host.locator('[data-action="start"]').click()
+        expect(host.locator("#escape-answer")).to_be_visible(timeout=8000)
+        expect(guest.locator("#escape-answer")).to_be_visible(timeout=8000)
+        initial = next(item for item in reversed(states[0]) if item.get("phase") == "escape_puzzle")
+        peer = next(item for item in reversed(states[1]) if item.get("phase") == "escape_puzzle")
+        assert initial["question_seconds"] == 900
+        assert initial["deadline"] == peer["deadline"]
+        assert len(initial["escape"]["rooms"]) == 5
+        assert "solution" not in str(initial) and "accepted_aliases" not in str(initial)
+        host.locator('[data-action="escape-hint"]').click()
+        expect(guest.locator(".hint-box")).to_be_visible(timeout=3000)
+        expect(guest.locator(".escape-team-card")).to_contain_text("2", timeout=3000)
+        for index, question in enumerate(ESCAPE_QUESTIONS):
+            if index == 0:
+                host.locator("#escape-answer").fill("incorrect first try")
+                host.locator('[data-action="escape-answer"]').click()
+                time.sleep(0.85)
+                assert next(item for item in reversed(states[0]) if item.get("phase") == "escape_puzzle")["escape"]["solved_puzzles"] == 0
+            solution = question.format_payload["solution"]
+            host.locator("#escape-answer").fill(solution)
+            host.locator('[data-action="escape-answer"]').click()
+            if index < 9:
+                expect(host.locator(".escape-progress")).to_contain_text(f"Puzzle {index + 2} of 10", timeout=3000)
+                expect(guest.locator(".escape-progress")).to_contain_text(f"Puzzle {index + 2} of 10", timeout=3000)
+            assert_no_horizontal_overflow(guest)
+        expect(host.locator(".results-card h2")).to_contain_text("team escaped", timeout=6000)
+        expect(guest.locator(".escape-result-grid")).to_contain_text("10 / 10")
+        result = next(item for item in reversed(states[0]) if item.get("phase") == "results")
+        assert result["results"]["outcome"] == "victory" and result["results"]["completed_rooms"] == 5
+        host.locator('[data-action="rematch"]').click()
+        expect(host.locator("[data-action='start']")).to_be_enabled(timeout=5000)
+        print("PASS: desktop/mobile Escape Room completed all ten linked puzzles across five rooms; shared hint and timer synchronized, wrong answer did not spend a hint, future solutions stayed private, victory and rematch verified")
     finally:
         host_context.close()
         guest_context.close()

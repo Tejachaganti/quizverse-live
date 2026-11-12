@@ -63,6 +63,27 @@ def test_solo_practice_create_mode_is_valid() -> None:
     assert event.mode == "solo_practice"
 
 
+@pytest.mark.parametrize("mode", ["bluff_master", "escape_room"])
+def test_structured_game_modes_are_valid(mode: str) -> None:
+    event = _parse_event(f'{{"event":"create","name":"Nova","mode":"{mode}"}}')
+    assert event.mode == mode
+
+
+def test_structured_actions_are_strict_and_bounded():
+    event = _parse_event('{"event":"bluff_submit","answer":"a believable answer","request_id":"bluff-request-0001"}')
+    assert event.answer == "a believable answer"
+    vote = _parse_event('{"event":"bluff_vote","choice_id":"randomized_choice_123","request_id":"vote-request-000001"}')
+    assert vote.choice_id == "randomized_choice_123"
+    puzzle = _parse_event('{"event":"escape_answer","answer":"seven","puzzle_index":2,"request_id":"puzzle-request-0001"}')
+    assert puzzle.puzzle_index == 2
+    hint = _parse_event('{"event":"escape_hint","request_id":"hint-request-000001"}')
+    assert hint.event == "escape_hint"
+    with pytest.raises(GameError):
+        _parse_event('{"event":"escape_answer","answer":"seven","puzzle_index":10,"request_id":"puzzle-request-0001"}')
+    with pytest.raises(GameError):
+        _parse_event('{"event":"bluff_vote","choice_id":"real-answer","request_id":"vote-request-000001","author_id":"p1"}')
+
+
 def test_new_modes_default_to_server_owned_round_counts_and_ability_action_is_strict():
     royale = _parse_event('{"event":"create","name":"Nova","mode":"quiz_royale"}')
     assert royale.question_count is None

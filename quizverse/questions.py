@@ -21,6 +21,7 @@ class Question:
     question_format: str = "multiple_choice"
     exam_collection_ids: frozenset[str] = frozenset()
     provenance: str = "built_in_reviewed"
+    format_payload: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.id:

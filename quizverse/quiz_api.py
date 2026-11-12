@@ -470,9 +470,13 @@ def install_quiz_api(app: FastAPI, access: QuizAccessService, generation: Genera
         difficulty: Literal["easy", "medium", "hard"] | None = None,
         q: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        question_format: Literal["multiple_choice", "open_ended", "puzzle"] = "multiple_choice",
     ) -> PublicQuizListResponse:
         try:
-            quizzes = access.list_public_quizzes(category=category, difficulty=difficulty, search=q, limit=limit)
+            quizzes = access.list_public_quizzes(
+                category=category, difficulty=difficulty, search=q, limit=limit,
+                question_format=question_format,
+            )
         except ValueError as error:
             raise ApiProblem(422, "invalid_filter", str(error)) from error
         return PublicQuizListResponse(quizzes=tuple(_player_response(quiz) for quiz in quizzes))
