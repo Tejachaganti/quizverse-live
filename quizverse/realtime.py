@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -22,6 +23,11 @@ from quizverse.special_questions import BLUFF_QUESTIONS, ESCAPE_QUESTIONS
 from quizverse.ai_generation import AIProvider, GenerationService
 from quizverse.persistence.authorization import QuizAccessService
 from quizverse.persistence.db import Database
+from quizverse.persistence.player_identity import (
+    LiveIdentityTickets,
+    MatchHistoryService,
+    PlayerIdentityService,
+)
 from quizverse.protocol import (
     AbilityEvent,
     AnswerEvent,
@@ -41,18 +47,30 @@ from quizverse.protocol import (
 from quizverse.quiz_api import install_quiz_api
 from quizverse.taxonomy_api import install_taxonomy_api
 from quizverse.exam_collection_api import install_exam_collection_api
+from quizverse.player_api import install_player_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
 RATE_LIMIT_WINDOW = 10.0
 CLIENT_DIRECTORY = Path(__file__).resolve().parent / "static"
+logger = logging.getLogger(__name__)
 
 
 class ConnectionHub:
     """Maps active, authenticated player identities to exactly one socket."""
 
-    def __init__(self, engine: GameEngine | None = None) -> None:
+    def __init__(
+        self,
+        engine: GameEngine | None = None,
+        *,
+        identities: PlayerIdentityService | None = None,
+        tickets: LiveIdentityTickets | None = None,
+        match_history: MatchHistoryService | None = None,
+    ) -> None:
         self.engine = engine or GameEngine()
+        self.identities = identities
+        self.tickets = tickets or LiveIdentityTickets()
+        self.match_history = match_history
         self.connections: dict[tuple[str, str], WebSocket] = {}
         self.peer_attempts: dict[str, deque[float]] = {}
         self.connection_lock = asyncio.Lock()
@@ -112,6 +130,35 @@ class ConnectionHub:
                 continue
             await self.send(websocket, event, state)
 
+    async def _profile_for_ticket(self, ticket: str | None) -> str | None:
+        if ticket is None:
+            return None
+        player_id = self.tickets.consume(ticket)
+        if player_id is None or self.identities is None:
+            raise GameError("invalid_identity_ticket", "The player sign-in ticket is invalid or expired. Sign in again.")
+        if not await asyncio.to_thread(self.identities.is_active, player_id):
+            raise GameError("invalid_identity_ticket", "The player profile is unavailable. Sign in again.")
+        return player_id
+
+    async def _persist_completed_matches(self) -> None:
+        if self.match_history is None:
+            return
+        for result in await self.engine.claim_completed_match_results():
+            match_id = str(result["engine_match_id"])
+            try:
+                await asyncio.to_thread(self.match_history.persist_completed, result)
+            except Exception as error:
+                logger.error(
+                    "Completed profile-linked match persistence failed; retry scheduled. engine_match_id=%s error_type=%s",
+                    match_id,
+                    type(error).__name__,
+                )
+                code = await self.engine.mark_match_result_failed(match_id, "persistence_unavailable")
+            else:
+                code = await self.engine.mark_match_result_saved(match_id)
+            if code:
+                await self.broadcast_room(code, "match-history-status")
+
     async def scheduler(self, stop: asyncio.Event) -> None:
         """Advance authoritative deadlines and expire idle memberships."""
         last_cleanup = time.monotonic()
@@ -120,6 +167,7 @@ class ConnectionHub:
             states = await self.engine.advance_due()
             for code in dict.fromkeys(str(state["code"]) for state in states):
                 await self.broadcast_room(code, "state")
+            await self._persist_completed_matches()
             if time.monotonic() - last_cleanup >= 10:
                 removed_rooms = await self.engine.cleanup()
                 for code in await self.engine.room_codes():
@@ -185,7 +233,10 @@ def create_app(
 
     active_engine = engine or GameEngine()
     active_engine.set_question_provider(load_game_questions)
-    hub = ConnectionHub(active_engine)
+    player_identities = PlayerIdentityService(persistence)
+    player_tickets = LiveIdentityTickets()
+    match_history = MatchHistoryService(persistence)
+    hub = ConnectionHub(active_engine, identities=player_identities, tickets=player_tickets, match_history=match_history)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -208,12 +259,14 @@ def create_app(
     app.state.database = persistence
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
+    install_player_api(app, player_identities, match_history, player_tickets)
     install_taxonomy_api(app, persistence)
     install_exam_collection_api(app, persistence)
 
     @app.get("/health", tags=["health"])
-    async def health() -> dict[str, str | bool]:
-        return {"ok": True, "service": "quizverse-live"}
+    async def health() -> dict[str, str | bool | int]:
+        persistence_health = await active_engine.match_history_persistence_health()
+        return {"ok": True, "service": "quizverse-live", **persistence_health}
 
     @app.middleware("http")
     async def security_headers(request, call_next):
@@ -261,10 +314,12 @@ def create_app(
                     if isinstance(event, CreateEvent):
                         if identity is not None:
                             raise GameError("already_joined", "This connection already belongs to an arena.")
+                        profile_id = await hub._profile_for_ticket(event.identity_ticket)
                         joined = await hub.engine.create_room(
                             event.name,
                             mode=event.mode,
-                            selection=event.model_dump(exclude={"event", "name", "mode"}, exclude_none=True),
+                            selection=event.model_dump(exclude={"event", "name", "mode", "identity_ticket"}, exclude_none=True),
+                            profile_id=profile_id,
                         )
                         identity = (str(joined["state"]["code"]), str(joined["player_id"]))
                         await hub.attach(identity, websocket)
@@ -272,7 +327,8 @@ def create_app(
                     elif isinstance(event, JoinEvent):
                         if identity is not None:
                             raise GameError("already_joined", "This connection already belongs to an arena.")
-                        joined = await hub.engine.join_room(event.code, event.name)
+                        profile_id = await hub._profile_for_ticket(event.identity_ticket)
+                        joined = await hub.engine.join_room(event.code, event.name, profile_id=profile_id)
                         identity = (str(joined["state"]["code"]), str(joined["player_id"]))
                         await hub.attach(identity, websocket)
                         await hub.send(websocket, "joined", joined["state"], token=joined["token"], player_id=joined["player_id"])

@@ -80,7 +80,12 @@ async def open_client(url: str) -> websockets.ClientConnection:
 def test_http_health_and_python_frontend_are_served(server_url: str) -> None:
     health = httpx.get(f"{server_url}/health")
     page = httpx.get(server_url)
-    assert health.json() == {"ok": True, "service": "quizverse-live"}
+    assert health.json() == {
+        "ok": True,
+        "service": "quizverse-live",
+        "pending_match_history": 0,
+        "retrying_match_history": 0,
+    }
     assert health.headers["content-security-policy"].startswith("default-src 'self'")
     assert health.headers["x-content-type-options"] == "nosniff"
     assert page.status_code == 200

@@ -326,3 +326,132 @@ class BuiltinSeed(Base):
     bank_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     seeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class PlayerProfile(Base):
+    """Opt-in pseudonymous identity, independent of quiz-owner capabilities."""
+
+    __tablename__ = "player_profiles"
+    __table_args__ = (
+        CheckConstraint("length(trim(display_name)) BETWEEN 1 AND 24", name="ck_player_display_name_length"),
+        CheckConstraint("status IN ('active', 'disabled', 'anonymized')", name="ck_player_status"),
+        CheckConstraint("version >= 1", name="ck_player_version"),
+        Index("ix_player_profiles_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    credentials: Mapped[list["PlayerCredential"]] = relationship(back_populates="player", cascade="all, delete-orphan")
+    matches: Mapped[list["MatchParticipant"]] = relationship(back_populates="player")
+
+
+class PlayerCredential(Base):
+    """Hashed, revocable bearer credential for a player profile."""
+
+    __tablename__ = "player_credentials"
+    __table_args__ = (
+        Index("ix_player_credentials_player_active", "player_id", "revoked_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    player: Mapped[PlayerProfile] = relationship(back_populates="credentials")
+
+
+class CompetitiveMatch(Base):
+    """Immutable server-verified terminal result; casual unbound matches are omitted."""
+
+    __tablename__ = "competitive_matches"
+    __table_args__ = (
+        CheckConstraint("status = 'completed'", name="ck_competitive_match_status"),
+        CheckConstraint("mode IN ('classic', 'speed_challenge', 'team_battle', 'elimination', 'solo_practice', 'quiz_royale', 'power_play', 'bluff_master', 'escape_room')", name="ck_competitive_match_mode"),
+        CheckConstraint("result_kind IN ('individual', 'team', 'cooperative', 'practice')", name="ck_match_result_kind"),
+        CheckConstraint("length(question_set_hash) = 64", name="ck_match_question_hash_length"),
+        CheckConstraint("length(result_digest) = 64", name="ck_match_result_digest_length"),
+        Index("ix_competitive_matches_completed_mode", "completed_at", "mode"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    engine_match_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="completed", server_default="completed")
+    result_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    rules_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    question_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_context: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    participants: Mapped[list["MatchParticipant"]] = relationship(back_populates="match", cascade="all, delete-orphan", order_by="MatchParticipant.seat_index")
+    teams: Mapped[list["MatchTeam"]] = relationship(back_populates="match", cascade="all, delete-orphan", order_by="MatchTeam.team_id")
+
+
+class MatchParticipant(Base):
+    """A seat-level result. Anonymous guests are represented without a durable identity."""
+
+    __tablename__ = "match_participants"
+    __table_args__ = (
+        UniqueConstraint("match_id", "seat_index", name="uq_match_participant_seat"),
+        UniqueConstraint("match_id", "player_id", name="uq_match_participant_player"),
+        CheckConstraint("seat_index >= 0", name="ck_match_seat_index"),
+        CheckConstraint("final_score IS NULL OR final_score >= 0", name="ck_match_final_score"),
+        CheckConstraint("correct_count IS NULL OR correct_count >= 0", name="ck_match_correct_count"),
+        CheckConstraint("answer_count IS NULL OR answer_count >= 0", name="ck_match_answer_count"),
+        CheckConstraint("placement IS NULL OR placement >= 1", name="ck_match_placement"),
+        CheckConstraint("disconnect_count >= 0", name="ck_match_disconnect_count"),
+        CheckConstraint("outcome IN ('win', 'loss', 'draw', 'team_win', 'team_loss', 'team_draw', 'practice', 'cooperative_success', 'cooperative_failure', 'participated')", name="ck_match_participant_outcome"),
+        Index("ix_match_participants_player_match", "player_id", "match_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    match_id: Mapped[str] = mapped_column(String(32), ForeignKey("competitive_matches.id", ondelete="RESTRICT"), nullable=False)
+    player_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="RESTRICT"))
+    seat_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    team_id: Mapped[str | None] = mapped_column(String(24))
+    final_score: Mapped[int | None] = mapped_column(Integer)
+    correct_count: Mapped[int | None] = mapped_column(Integer)
+    answer_count: Mapped[int | None] = mapped_column(Integer)
+    placement: Mapped[int | None] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    disconnect_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    reconnect_expired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    forfeited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
+    match: Mapped[CompetitiveMatch] = relationship(back_populates="participants")
+    player: Mapped[PlayerProfile | None] = relationship(back_populates="matches")
+
+
+class MatchTeam(Base):
+    """Team-level official result, kept separate from individual player placements."""
+
+    __tablename__ = "match_teams"
+    __table_args__ = (
+        UniqueConstraint("match_id", "team_id", name="uq_match_team"),
+        CheckConstraint("placement IS NULL OR placement >= 1", name="ck_match_team_placement"),
+        CheckConstraint("score >= 0 AND correct_count >= 0 AND response_time_ms >= 0", name="ck_match_team_metrics"),
+        CheckConstraint("outcome IN ('win', 'loss', 'draw')", name="ck_match_team_outcome"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    match_id: Mapped[str] = mapped_column(String(32), ForeignKey("competitive_matches.id", ondelete="RESTRICT"), nullable=False)
+    team_id: Mapped[str] = mapped_column(String(24), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    correct_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    placement: Mapped[int | None] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(8), nullable=False)
+
+    match: Mapped[CompetitiveMatch] = relationship(back_populates="teams")

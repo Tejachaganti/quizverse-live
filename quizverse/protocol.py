@@ -15,6 +15,7 @@ class EventModel(BaseModel):
 class CreateEvent(EventModel):
     event: Literal["create"]
     name: str = Field(min_length=1, max_length=18)
+    identity_ticket: str | None = Field(default=None, min_length=40, max_length=128)
     mode: Literal["classic", "speed_challenge", "team_battle", "elimination", "solo_practice", "quiz_royale", "power_play", "bluff_master", "escape_room"] = "classic"
     question_count: int | None = Field(default=None, ge=1, le=20)
     difficulty: Literal["easy", "medium", "hard", "mixed"] = "medium"
@@ -49,6 +50,7 @@ class JoinEvent(EventModel):
     event: Literal["join"]
     name: str = Field(min_length=1, max_length=18)
     code: str = Field(min_length=6, max_length=6)
+    identity_ticket: str | None = Field(default=None, min_length=40, max_length=128)
 
 
 class ReconnectEvent(EventModel):

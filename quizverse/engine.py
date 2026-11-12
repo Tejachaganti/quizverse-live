@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
+import json
 import re
 import secrets
 import time
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Callable
 
@@ -73,7 +76,9 @@ class Player:
     id: str
     name: str
     token_hash: str
+    profile_id: str | None = None
     connected: bool = True
+    disconnect_count: int = 0
     score: int = 0
     correct: int = 0
     answers_submitted: int = 0
@@ -128,6 +133,17 @@ class Room:
     escape_attempts: dict[str, tuple[int, float]] = field(default_factory=dict)
     escape_started_at: float | None = None
     escape_completed_at: float | None = None
+    engine_match_id: str | None = None
+    match_started_at: datetime | None = None
+    match_completed_at: datetime | None = None
+    question_set_hash: str | None = None
+    completion_status: str = "not_started"
+    completion_attempts: int = 0
+    completion_next_retry: float = 0.0
+    completion_inflight: bool = False
+    completion_error_code: str | None = None
+    saved_match_id: str | None = None
+    completion_payload: dict[str, object] | None = None
 
 
 class GameEngine:
@@ -655,6 +671,10 @@ class GameEngine:
                 "exam_collection_id": room.selection.get("exam_collection_id"),
             },
             "phase": room.phase.value,
+            **({"match_history": {
+                "status": room.completion_status if any(player.profile_id for player in room.players.values()) else "not_linked",
+                "attempts": room.completion_attempts,
+            }} if room.phase == Phase.RESULTS else {}),
             "host_id": room.host_id,
             "players": public_players,
             **({"remaining_players": sum(not player.eliminated for player in room.players.values())} if room.match_config.elimination else {}),
@@ -750,7 +770,10 @@ class GameEngine:
     def _joined(self, room: Room, player: Player, token: str) -> dict[str, object]:
         return {"event": "joined", "token": token, "player_id": player.id, "state": self._snapshot(room, player.id)}
 
-    async def create_room(self, raw_name: object, mode: object = "classic", selection: dict[str, object] | None = None) -> dict[str, object]:
+    async def create_room(
+        self, raw_name: object, mode: object = "classic", selection: dict[str, object] | None = None,
+        *, profile_id: str | None = None,
+    ) -> dict[str, object]:
         name = self.validate_name(raw_name)
         try:
             match_config = resolve_mode(mode)
@@ -778,13 +801,13 @@ class GameEngine:
                 match_config=configured,
                 selection=chosen,
             )
-            player = Player(id=player_id, name=name, token_hash=self._token_hash(token))
+            player = Player(id=player_id, name=name, token_hash=self._token_hash(token), profile_id=profile_id)
             room.players[player_id] = player
             self._rooms[code] = room
             self._sessions[player.token_hash] = (code, player_id)
             return self._joined(room, player, token)
 
-    async def join_room(self, raw_code: object, raw_name: object) -> dict[str, object]:
+    async def join_room(self, raw_code: object, raw_name: object, *, profile_id: str | None = None) -> dict[str, object]:
         name = self.validate_name(raw_name)
         if not isinstance(raw_code, str) or not re.fullmatch(r"[A-HJ-NP-Z2-9]{6}", raw_code.strip().upper()):
             raise GameError("invalid_code", "Room codes use six letters or numbers, excluding ambiguous characters.")
@@ -800,9 +823,11 @@ class GameEngine:
                 raise GameError("room_full", f"This arena is full ({room.match_config.max_players} {limit_label} maximum).")
             if any(player.name.casefold() == name.casefold() for player in room.players.values()):
                 raise GameError("name_in_use", "That display name is already in this arena.")
+            if profile_id is not None and any(player.profile_id == profile_id for player in room.players.values()):
+                raise GameError("profile_already_in_room", "This player profile already has a seat in the arena.")
             player_id = secrets.token_urlsafe(16)
             token = secrets.token_urlsafe(32)
-            player = Player(id=player_id, name=name, token_hash=self._token_hash(token))
+            player = Player(id=player_id, name=name, token_hash=self._token_hash(token), profile_id=profile_id)
             room.players[player_id] = player
             if room.host_id not in room.players or not room.players[room.host_id].connected:
                 room.host_id = player_id
@@ -940,6 +965,27 @@ class GameEngine:
             room.elimination_end_reason = None
             room.terminal_elimination_round = None
             room.phase = Phase.COUNTDOWN
+            room.engine_match_id = secrets.token_hex(16)
+            room.match_started_at = datetime.fromtimestamp(self._wall_time(), UTC)
+            room.match_completed_at = None
+            question_ids = [
+                {
+                    "id": question.id, "format": question.question_format, "prompt": question.prompt,
+                    "options": list(question.options), "answer": question.answer,
+                    "format_payload": question.format_payload,
+                }
+                for question in room.questions
+            ]
+            room.question_set_hash = hashlib.sha256(
+                json.dumps(question_ids, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            room.completion_status = "pending" if any(player.profile_id for player in room.players.values()) else "not_linked"
+            room.completion_attempts = 0
+            room.completion_next_retry = self._monotonic()
+            room.completion_inflight = False
+            room.completion_error_code = None
+            room.saved_match_id = None
+            room.completion_payload = None
             self._set_deadline(room, room.match_config.countdown_seconds)
             self._touch(room)
             return self._snapshot(room, player_id)
@@ -1210,8 +1256,7 @@ class GameEngine:
             if room.match_config.power_play and player.power_fifty_round == room.round_index and choice not in player.power_fifty_choices:
                 raise GameError("choice_hidden", "Choose one of the options still available to you.")
             player.answer = Answer(choice=choice, accepted_at=now)
-            if room.match_config.mode == GameMode.SOLO_PRACTICE:
-                player.answers_submitted += 1
+            player.answers_submitted += 1
             if room.match_config.elimination:
                 all_answered = all(candidate.eliminated or candidate.answer is not None for candidate in room.players.values())
             else:
@@ -1258,6 +1303,7 @@ class GameEngine:
     async def cast_bluff_vote(self, room_code: str, player_id: str, choice_id: object, request_id: object) -> dict[str, object]:
         async with self._lock:
             room, _ = self._get_room_player(room_code, player_id)
+            player = room.players[player_id]
             if not room.match_config.bluff_master:
                 raise GameError("wrong_mode", "Voting is only available in Bluff Master.")
             changed = self._advance_room(room, self._monotonic())
@@ -1277,6 +1323,7 @@ class GameEngine:
                 raise GameError("self_vote", "You cannot vote for your own fake answer.")
             room.bluff_request_ids.add(request_key)
             room.bluff_votes[player_id] = str(choice_id)
+            player.answers_submitted += 1
             if all(candidate.id in room.bluff_votes or not candidate.connected for candidate in room.players.values()):
                 self._reveal_bluff_results(room)
             self._touch(room)
@@ -1392,11 +1439,14 @@ class GameEngine:
                 raise GameError("host_only", "Only the host can change the arena after a game.")
             if room.phase != Phase.RESULTS:
                 raise GameError("wrong_phase", "The quiz must finish before returning to the lobby.")
+            if any(player.profile_id for player in room.players.values()) and room.saved_match_id != room.engine_match_id:
+                raise GameError("history_pending", "This profile-linked result is still being saved. Please wait before starting a rematch.")
             if (
                 room.match_config.mode == GameMode.TEAM_BATTLE
                 or room.match_config.elimination
                 or room.match_config.bluff_master
                 or room.match_config.escape_room
+                            or any(candidate.profile_id for candidate in room.players.values())
             ):
                 self._prune_expired_players(room, self._monotonic())
             room.phase = Phase.WAITING
@@ -1445,6 +1495,8 @@ class GameEngine:
     async def disconnect(self, room_code: str, player_id: str) -> list[dict[str, object]]:
         async with self._lock:
             room, player = self._get_room_player(room_code, player_id)
+            if player.connected:
+                player.disconnect_count += 1
             player.connected = False
             player.disconnected_at = self._monotonic()
             if room.host_id == player_id:
@@ -1459,6 +1511,12 @@ class GameEngine:
             now = self._monotonic()
             removed: list[str] = []
             for code, room in list(self._rooms.items()):
+                if (
+                    room.phase == Phase.RESULTS
+                    and any(player.profile_id for player in room.players.values())
+                    and room.saved_match_id != room.engine_match_id
+                ):
+                    continue
                 for player_id, player in list(room.players.items()):
                     if not player.connected and player.disconnected_at is not None and now - player.disconnected_at > RECONNECT_SECONDS:
                         if (
@@ -1502,6 +1560,177 @@ class GameEngine:
         async with self._lock:
             room, _ = self._get_room_player(room_code, player_id)
             return self._snapshot(room, player_id)
+
+    @staticmethod
+    def _match_result_kind(room: Room) -> str:
+        if room.match_config.mode == GameMode.SOLO_PRACTICE:
+            return "practice"
+        if room.match_config.mode == GameMode.ESCAPE_ROOM:
+            return "cooperative"
+        if room.match_config.mode == GameMode.TEAM_BATTLE:
+            return "team"
+        return "individual"
+
+    def _completed_match_payload(self, room: Room) -> dict[str, object]:
+        assert room.engine_match_id and room.match_started_at and room.question_set_hash
+        viewer_id = next(iter(room.players))
+        state = self._snapshot(room, viewer_id)
+        results = state.get("results") or {}
+        result_kind = self._match_result_kind(room)
+        team_results = results.get("teams", []) if isinstance(results, dict) else []
+        teams_by_id = {str(team.get("team_id")): team for team in team_results if isinstance(team, dict)}
+        if room.match_config.mode == GameMode.ESCAPE_ROOM:
+            escape = results if isinstance(results, dict) else {}
+            outcome = "cooperative_success" if escape.get("outcome") == "victory" else "cooperative_failure"
+            result_context: dict[str, object] = {
+                "outcome": escape.get("outcome"), "completed_rooms": escape.get("completed_rooms"),
+                "solved_puzzles": escape.get("solved_puzzles"), "remaining_hints": escape.get("remaining_hints"),
+                "elapsed_seconds": escape.get("elapsed_seconds"),
+            }
+        elif room.match_config.mode == GameMode.SOLO_PRACTICE:
+            practice = results.get("practice_summary", {}) if isinstance(results, dict) else {}
+            outcome = "practice"
+            result_context = {key: practice.get(key) for key in (
+                "correct_answers", "incorrect_answers", "unanswered_questions", "accuracy_percent",
+            )} if isinstance(practice, dict) else {}
+        else:
+            outcome = "participated"
+            result_context = {}
+
+        leaderboard = results.get("leaderboard", []) if isinstance(results, dict) else []
+        by_player = {str(row.get("id")): row for row in leaderboard if isinstance(row, dict) and row.get("id") is not None}
+        ordered = sorted(room.players.values(), key=lambda item: (-item.score, -item.correct, item.name.casefold()))
+        tie_keys: dict[tuple[int, int], int] = {}
+        next_place = 1
+        for player in ordered:
+            if player.eliminated or room.match_config.royale:
+                continue
+            key = (player.score, player.correct)
+            if key not in tie_keys:
+                tie_keys[key] = next_place
+            next_place += 1
+        placement_by_player: dict[str, int | None] = {}
+        for player in room.players.values():
+            row = by_player.get(player.id, {})
+            placement = row.get("placement")
+            if placement is None and result_kind == "individual" and not room.match_config.elimination:
+                placement = tie_keys.get((player.score, player.correct), len(room.players))
+            placement_by_player[player.id] = int(placement) if placement is not None else None
+        winning_placements = sum(placement == 1 for placement in placement_by_player.values())
+        participant_rows: list[dict[str, object]] = []
+        for seat, player in enumerate(room.players.values()):
+            row = by_player.get(player.id, {})
+            team = teams_by_id.get(player.team_id or "")
+            placement = placement_by_player[player.id]
+            if result_kind == "team":
+                placement = None
+                participant_outcome = (
+                    "team_win" if team and team.get("is_winner") and not team.get("shared_placement")
+                    else "team_draw" if team and team.get("is_winner")
+                    else "team_loss"
+                )
+            elif result_kind == "cooperative":
+                participant_outcome = outcome
+                placement = None
+            elif result_kind == "practice":
+                participant_outcome = "practice"
+                placement = None
+            else:
+                if placement == 1:
+                    participant_outcome = "draw" if winning_placements > 1 else "win"
+                else:
+                    participant_outcome = "loss"
+            participant_rows.append({
+                "seat_index": seat, "player_id": player.profile_id, "team_id": player.team_id if result_kind == "team" else None,
+                "final_score": None if result_kind == "cooperative" else player.score,
+                "correct_count": None if result_kind == "cooperative" else player.correct,
+                "answer_count": None if result_kind == "cooperative" else player.answers_submitted,
+                "placement": int(placement) if placement is not None else None,
+                "outcome": participant_outcome, "disconnect_count": player.disconnect_count,
+                "reconnect_expired": player.reconnect_expired, "forfeited": False,
+            })
+        team_rows = [
+            {
+                "team_id": str(team["team_id"]), "score": int(team["score"]),
+                "correct_count": int(team["correct"]), "response_time_ms": int(team["correct_response_time_ms"]),
+                "placement": team.get("placement"),
+                "outcome": "draw" if team.get("is_winner") and team.get("shared_placement") else "win" if team.get("is_winner") else "loss",
+            }
+            for team in team_results if isinstance(team, dict)
+        ]
+        if room.match_config.mode == GameMode.TEAM_BATTLE:
+            result_context = {"winning_team_ids": results.get("winning_team_ids", []), "is_draw": results.get("is_draw", False)}
+        result_context["selection"] = {
+            "content_scope": room.selection.get("content_scope", "built_in"),
+            "difficulty": room.selection.get("difficulty", "medium"),
+            "language": room.selection.get("language", "en"),
+            "learning_preset": room.selection.get("learning_preset", "teen_challenge"),
+            "categories": list(room.selection.get("categories", [])),
+            "question_count": room.match_config.question_count,
+            "exam_collection_id": room.selection.get("exam_collection_id"),
+        }
+        return {
+            "source": "game_engine", "engine_match_id": room.engine_match_id, "mode": room.match_config.mode.value,
+            "status": "completed", "result_kind": result_kind, "rules_version": "stage-7-v1",
+            "started_at": room.match_started_at,
+            "completed_at": room.match_completed_at or datetime.fromtimestamp(self._wall_time(), UTC),
+            "question_set_hash": room.question_set_hash, "participants": participant_rows,
+            "teams": team_rows, "result_context": result_context,
+        }
+
+    async def claim_completed_match_results(self) -> list[dict[str, object]]:
+        async with self._lock:
+            now = self._monotonic()
+            output = []
+            for room in self._rooms.values():
+                if (
+                    room.phase == Phase.RESULTS and room.engine_match_id and room.match_started_at
+                    and any(player.profile_id for player in room.players.values())
+                    and room.saved_match_id != room.engine_match_id and not room.completion_inflight
+                    and now >= room.completion_next_retry
+                ):
+                    if room.match_completed_at is None:
+                        room.match_completed_at = datetime.fromtimestamp(self._wall_time(), UTC)
+                    room.completion_inflight = True
+                    if room.completion_payload is None:
+                        room.completion_payload = self._completed_match_payload(room)
+                    output.append(copy.deepcopy(room.completion_payload))
+            return output
+
+    async def mark_match_result_saved(self, engine_match_id: str) -> str | None:
+        async with self._lock:
+            for room in self._rooms.values():
+                if room.engine_match_id == engine_match_id:
+                    room.saved_match_id = engine_match_id
+                    room.completion_status = "saved"
+                    room.completion_inflight = False
+                    room.completion_error_code = None
+                    return room.code
+            return None
+
+    async def mark_match_result_failed(self, engine_match_id: str, error_code: str) -> str | None:
+        async with self._lock:
+            for room in self._rooms.values():
+                if room.engine_match_id == engine_match_id:
+                    room.completion_attempts += 1
+                    room.completion_inflight = False
+                    room.completion_status = "retrying"
+                    room.completion_error_code = error_code
+                    room.completion_next_retry = self._monotonic() + min(30.0, 0.5 * (2 ** min(room.completion_attempts, 6)))
+                    return room.code
+            return None
+
+    async def match_history_persistence_health(self) -> dict[str, int]:
+        async with self._lock:
+            linked = [
+                room for room in self._rooms.values()
+                if room.phase == Phase.RESULTS and any(player.profile_id for player in room.players.values())
+                and room.saved_match_id != room.engine_match_id
+            ]
+            return {
+                "pending_match_history": len(linked),
+                "retrying_match_history": sum(room.completion_status == "retrying" for room in linked),
+            }
 
     async def room_codes(self) -> tuple[str, ...]:
         async with self._lock:

@@ -14,4 +14,9 @@ def test_health_endpoint_reports_ready() -> None:
     response = asyncio.run(request_health())
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "service": "quizverse-live"}
+    assert response.json() == {
+        "ok": True,
+        "service": "quizverse-live",
+        "pending_match_history": 0,
+        "retrying_match_history": 0,
+    }

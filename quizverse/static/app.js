@@ -5,6 +5,7 @@
   const toast = document.querySelector('#toast');
   const connectionStatus = document.querySelector('#connection-status');
   const PREFERENCE_KEY = 'qv-player-preferences';
+  const PLAYER_CREDENTIAL_KEY = 'qv-player-credential';
   const DEFAULT_PREFERENCES = { learning_preset: 'teen_challenge', difficulty: 'medium', language: 'en', topics: {} };
   function readPreferences() {
     try {
@@ -37,6 +38,15 @@
     reconnectTimer: null,
     toastTimer: null,
     tick: null,
+    profileCredential: sessionStorage.getItem(PLAYER_CREDENTIAL_KEY) || '',
+    profile: null,
+    profileStats: null,
+    profileMatches: [],
+    profileHistoryTotal: 0,
+    profileLoading: false,
+    profileNotice: '',
+    profilePage: 0,
+    oneTimeCredential: '',
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -541,8 +551,63 @@
     const momentumAwards = state.room.results?.momentum_adjustments || [];
     return `<section class="results-card"><div class="winner-crown" aria-hidden="true">♛</div><div class="section-kicker" style="justify-content:center">TEN ROUNDS. ONE ARENA.</div><h2>${winner ? `${escapeHtml(winner.name)} takes the crown.` : 'The arena is yours.'}</h2><p class="results-copy">${winner ? `${winner.score.toLocaleString()} points · ${winner.correct} correct answers` : 'Thanks for playing together.'}</p><div class="podium" aria-label="Top players">${podiumOrder.map(player => { const place = players.indexOf(player) + 1; return `<div class="podium-place ${place === 1 ? 'first' : ''}"><div class="podium-medal">${['♛', '✧', '✦'][place - 1]}</div><div class="podium-name">${escapeHtml(player.name)}</div><div class="podium-score">${player.score.toLocaleString()}</div></div>`; }).join('')}</div><div class="final-list" aria-label="Final rankings">${players.map((player, index) => `<div class="final-row"><span class="rank ${index < 3 ? ['gold', 'silver', 'bronze'][index] : ''}">${index + 1}</span><span class="leader-name">${escapeHtml(player.name)}</span><span class="final-stat">${player.correct} correct · +${player.momentum_points} Momentum</span><strong class="leader-score">${player.score.toLocaleString()}</strong></div>`).join('')}</div>${momentumAwards.length ? `<p class="momentum-log">Momentum Shift awards: ${momentumAwards.map(adjustment => `${escapeHtml(adjustment.name)} +${adjustment.points} (round ${adjustment.round})`).join(' · ')}</p>` : '<p class="momentum-log">No Momentum Shift awards this match.</p>'}${state.playerId === state.room.host_id ? `<div class="results-actions"><button class="btn btn-primary" type="button" data-action="rematch">Run it back &nbsp;↻</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button></div>` : `<div class="waiting-note">The host can start a rematch whenever the crew is ready.</div>`}</section>`;
   }
+  function profileScreen() {
+    app.classList.remove('library-shell');
+    if (state.profileLoading && !state.profile) {
+      app.innerHTML = '<section class="profile-card"><div class="loading-state"><span class="loader"></span><p>Loading player profile…</p></div></section>';
+      return;
+    }
+    if (!state.profileCredential || !state.profile) {
+      app.innerHTML = `<section class="profile-card"><div class="section-kicker">OPTIONAL PLAYER IDENTITY</div><h1>Your competitive profile.</h1><p class="subcopy">Create or sign in to a pseudonymous profile to keep personal match history. Casual play remains available without a profile.</p><p class="profile-warning">Your credential is a private bearer key. It is stored only for this browser tab. Save a copy in a password manager; if it is lost, this anonymous profile cannot be recovered.</p>${state.profileNotice ? `<p class="library-message" role="alert">${escapeHtml(state.profileNotice)}</p>` : ''}<div class="profile-columns"><form class="profile-form"><h2>Create profile</h2><label class="form-label" for="profile-create-name">Display name</label><input class="field" id="profile-create-name" maxlength="24" autocomplete="nickname" required placeholder="Your player name"><button class="btn btn-primary" type="button" data-action="profile-create" ${state.profileLoading ? 'disabled' : ''}>${state.profileLoading ? 'Creating…' : 'Create profile'}</button></form><form class="profile-form"><h2>Sign in</h2><label class="form-label" for="profile-credential">Player credential</label><input class="field" id="profile-credential" type="password" autocomplete="current-password" maxlength="128" required placeholder="Paste your saved credential"><button class="btn btn-secondary" type="button" data-action="profile-signin" ${state.profileLoading ? 'disabled' : ''}>Sign in</button></form></div></section>`;
+      return;
+    }
+    const stats = state.profileStats || { history_available: false, completed_matches: 0, wins: 0, losses: 0, draws: 0, mode_breakdown: [] };
+    const matches = state.profileMatches.map(match => `<article class="profile-match"><div><strong>${escapeHtml(match.mode.replaceAll('_', ' '))}</strong><span>${escapeHtml(new Date(match.completed_at).toLocaleString())}</span></div><div><strong>${escapeHtml(match.outcome.replaceAll('_', ' '))}</strong><span>${match.placement ? `Place ${match.placement}` : escapeHtml(match.result_kind)}</span></div><div><strong>${match.final_score ?? (match.team?.score ?? '—')}</strong><span>${match.correct_count ?? (match.team?.correct_count ?? 'Shared result')}</span></div></article>`).join('');
+    app.innerHTML = `<section class="profile-card"><div class="section-kicker">PLAYER PROFILE</div><h1>${escapeHtml(state.profile.display_name)}</h1><p class="subcopy">Pseudonymous identity · no email or personal details</p>${state.profileNotice ? `<p class="library-message" role="status">${escapeHtml(state.profileNotice)}</p>` : ''}<form class="profile-name-form"><label class="form-label" for="profile-name-update">Display name</label><input class="field" id="profile-name-update" maxlength="24" required value="${escapeHtml(state.profile.display_name)}"><button class="btn btn-secondary" type="button" data-action="profile-update">Save name</button></form>${state.oneTimeCredential ? '<div class="profile-warning" role="status">A new credential is ready. Copy it now; it will not be shown again. If lost, it cannot be recovered.</div><button class="btn btn-secondary" type="button" data-action="profile-copy-credential">Copy one-time credential</button>' : ''}<div class="profile-actions"><button class="btn btn-secondary" type="button" data-action="profile-rotate">Rotate credential</button><button class="btn btn-quiet" type="button" data-action="profile-logout">Sign out on this tab</button><button class="btn btn-danger" type="button" data-action="profile-delete">Delete profile</button></div><h2>Competitive record</h2>${stats.history_available ? `<div class="profile-stats"><article><strong>${stats.completed_matches}</strong><span>Matches</span></article><article><strong>${stats.wins}</strong><span>Wins</span></article><article><strong>${stats.draws}</strong><span>Draws</span></article><article><strong>${stats.losses}</strong><span>Losses</span></article></div>` : '<p class="profile-empty">No persisted match history yet. This is different from a zero win or loss record.</p>'}<h2>Match history</h2>${matches || '<p class="profile-empty">No profile-linked completed matches yet. Join or create a match while signed in to add one.</p>'}${state.profileHistoryTotal > state.profileMatches.length ? `<button class="btn btn-secondary" type="button" data-action="profile-more">Load more</button>` : ''}<p class="microcopy">Profile deletion revokes credentials and anonymizes this profile in retained match records. Match integrity facts may remain without identifying details.</p></section>`;
+  }
+  async function playerApi(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (state.profileCredential) headers.set('Authorization', `Bearer ${state.profileCredential}`);
+    if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    return fetch(path, { ...options, headers, cache: 'no-store' }).then(async response => {
+      let data = null;
+      try { data = await response.json(); } catch { /* Empty responses are valid for deletion. */ }
+      return { response, data };
+    });
+  }
+  async function refreshProfile() {
+    if (!state.profileCredential) { state.profile = null; render(); return; }
+    state.profileLoading = true; state.profileNotice = ''; render();
+    try {
+      const [profileResult, statsResult, matchesResult] = await Promise.all([
+        playerApi('/api/player-profiles/me'), playerApi('/api/player-profiles/me/competitive-stats'),
+        playerApi(`/api/player-profiles/me/matches?limit=20&offset=${state.profilePage * 20}`),
+      ]);
+      if (profileResult.response.status === 401) throw new Error('Your credential was rejected. Sign in with a valid saved credential.');
+      if (!profileResult.response.ok || !statsResult.response.ok || !matchesResult.response.ok) throw new Error('Player profile storage is temporarily unavailable. Try again.');
+      state.profile = profileResult.data; state.profileStats = statsResult.data;
+      state.profileMatches = state.profilePage ? [...state.profileMatches, ...(matchesResult.data.matches || [])] : (matchesResult.data.matches || []);
+      state.profileHistoryTotal = matchesResult.data.total || 0;
+    } catch (error) {
+      if (error.message.startsWith('Your credential')) { sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY); state.profileCredential = ''; state.profile = null; }
+      state.profileNotice = error.message || 'Could not load this profile.';
+    } finally { state.profileLoading = false; render(); }
+  }
+  async function getLiveIdentityTicket() {
+    if (!state.profileCredential) return null;
+    const { response, data } = await playerApi('/api/player-profiles/me/live-ticket', { method: 'POST' });
+    if (!response.ok || typeof data?.live_ticket !== 'string') {
+      notify(response.status === 401 ? 'Your player credential expired or was revoked. Sign in again or continue casually.' : 'Could not link your player profile to this arena. Try again or continue casually.');
+      return false;
+    }
+    return data.live_ticket;
+  }
   function render() {
     if (state.tick) clearInterval(state.tick);
+    if (state.view === 'profile') {
+      profileScreen();
+      return;
+    }
     if (state.view === 'library') {
       app.classList.add('library-shell');
       if (state.screen !== 'library') {
@@ -562,6 +627,17 @@
     state.screen = phase === 'waiting' ? 'lobby' : phase === 'results' ? 'results' : 'game';
     const offline = state.connected ? '' : '<div class="offline-banner" role="status">Connection interrupted — reconnecting to your arena…</div>';
     app.innerHTML = `${offline}${phase === 'waiting' ? lobby() : phase === 'results' ? results() : game()}`;
+    if (phase === 'results' && state.room.match_history && state.room.match_history.status !== 'not_linked') {
+      const notice = document.createElement('p');
+      notice.className = `profile-history-status${state.room.match_history.status === 'retrying' ? ' warning' : ''}`;
+      notice.setAttribute('role', 'status');
+      notice.textContent = state.room.match_history.status === 'saved'
+        ? 'This profile-linked match is saved to your history.'
+        : state.room.match_history.status === 'retrying'
+          ? 'Match history is not saved yet. The server is retrying; please wait before starting a rematch.'
+          : 'Saving this match to your profile history…';
+      app.querySelector('.results-card')?.prepend(notice);
+    }
     updateModePresentation();
     const roundTag = app.querySelector('.round-tag');
     if (roundTag) roundTag.textContent = `ROUND ${String(Math.min(state.room.round, state.room.total_rounds)).padStart(2, '0')} / ${state.room.total_rounds}`;
@@ -605,7 +681,59 @@
       state.name = nickname.value.trim();
       sessionStorage.setItem('qv-name', state.name);
     }
-    if (action === 'quiz-library') {
+    if (action === 'profile-create') {
+      const displayName = document.querySelector('#profile-create-name')?.value || '';
+      state.profileLoading = true; state.profileNotice = ''; render();
+      try {
+        const { response, data } = await playerApi('/api/player-profiles', { method: 'POST', body: JSON.stringify({ display_name: displayName }) });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not create a player profile.');
+        state.profileCredential = data.credential; state.oneTimeCredential = data.credential;
+        sessionStorage.setItem(PLAYER_CREDENTIAL_KEY, data.credential);
+        await refreshProfile();
+      } catch (error) { state.profileLoading = false; state.profileNotice = error.message || 'Could not create a player profile.'; render(); }
+    } else if (action === 'profile-signin') {
+      const credential = document.querySelector('#profile-credential')?.value.trim() || '';
+      if (!credential) { notify('Paste your saved player credential to sign in.'); return; }
+      state.profileCredential = credential; state.oneTimeCredential = '';
+      sessionStorage.setItem(PLAYER_CREDENTIAL_KEY, credential);
+      await refreshProfile();
+    } else if (action === 'profile-update') {
+      const displayName = document.querySelector('#profile-name-update')?.value || '';
+      try {
+        const { response, data } = await playerApi('/api/player-profiles/me', { method: 'PATCH', body: JSON.stringify({ display_name: displayName, expected_version: state.profile.version }) });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not update your profile.');
+        state.profile = data; state.profileNotice = 'Display name updated.'; render();
+      } catch (error) { state.profileNotice = error.message || 'Could not update your profile.'; render(); }
+    } else if (action === 'profile-rotate') {
+      try {
+        const { response, data } = await playerApi('/api/player-profiles/me/credentials/rotate', { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not rotate the credential.');
+        state.profileCredential = data.credential; state.oneTimeCredential = data.credential;
+        sessionStorage.setItem(PLAYER_CREDENTIAL_KEY, data.credential);
+        await refreshProfile();
+      } catch (error) { state.profileNotice = error.message || 'Could not rotate the credential.'; render(); }
+    } else if (action === 'profile-copy-credential') {
+      if (!state.oneTimeCredential) { notify('There is no new credential to copy.'); return; }
+      try {
+        await navigator.clipboard.writeText(state.oneTimeCredential);
+        state.oneTimeCredential = '';
+        state.profileNotice = 'Credential copied. Keep it private; it cannot be recovered if lost.';
+        render();
+      } catch { notify('Clipboard access is unavailable. The credential remains stored for this tab; rotate it later if needed.'); }
+    } else if (action === 'profile-logout') {
+      sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
+      state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
+      state.oneTimeCredential = ''; state.profileNotice = 'Signed out on this tab.'; render();
+    } else if (action === 'profile-delete') {
+      if (!window.confirm('Delete this pseudonymous profile? Credentials will be revoked and retained match records anonymized. This cannot be undone.')) return;
+      const { response, data } = await playerApi('/api/player-profiles/me', { method: 'DELETE' });
+      if (!response.ok) { state.profileNotice = data?.error?.message || 'Could not delete this profile.'; render(); return; }
+      sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
+      state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
+      state.oneTimeCredential = ''; state.profileNotice = 'Profile deleted and identifying profile data anonymized.'; render();
+    } else if (action === 'profile-more') {
+      state.profilePage += 1; await refreshProfile();
+    } else if (action === 'quiz-library') {
       state.view = 'library';
       state.screen = '';
       setActiveNavigation();
@@ -618,12 +746,14 @@
       }
       document.querySelector('#name-error').textContent = '';
       if (action === 'create') {
+        const identityTicket = await getLiveIdentityTicket();
+        if (identityTicket === false) return;
         const mode = document.querySelector('#game-mode')?.value || 'classic';
         const solo = mode === 'solo_practice';
         const scope = document.querySelector('#match-scope')?.value || 'built_in';
         const selectedQuizzes = [...(document.querySelector('#match-quiz')?.selectedOptions || [])].slice(0, 20).map(option => option.value);
         send('create', {
-          name: state.name, mode,
+          name: state.name, mode, ...(identityTicket ? { identity_ticket: identityTicket } : {}),
           question_count: Number(document.querySelector('#match-count')?.value || 10),
           difficulty: solo ? state.preferences.difficulty : document.querySelector('#match-difficulty')?.value || 'medium',
           learning_preset: solo ? state.preferences.learning_preset : document.querySelector('#match-preset')?.value || 'teen_challenge',
@@ -647,7 +777,9 @@
         document.querySelector('#room-code').focus();
         return;
       }
-      send('join', { name: state.name, code });
+      const identityTicket = await getLiveIdentityTicket();
+      if (identityTicket === false) return;
+      send('join', { name: state.name, code, ...(identityTicket ? { identity_ticket: identityTicket } : {}) });
     } else if (action === 'copy') {
       try { await navigator.clipboard.writeText(state.room.code); notify('Arena code copied. Rally your crew!'); }
       catch { notify(`Your arena code is ${state.room.code}`); }
@@ -691,7 +823,8 @@
     state.view = button.dataset.view;
     state.screen = '';
     setActiveNavigation();
-    render();
+    if (state.view === 'profile') void refreshProfile();
+    else render();
   });
   setActiveNavigation();
   connect();
