@@ -50,8 +50,18 @@ class InsufficientInventory(ValueError):
 def _eligible(question: T, filters: SelectionFilters) -> bool:
     if question.question_format != filters.question_format or question.language.lower() != filters.language.lower():
         return False
-    if filters.categories and question.category_id not in filters.categories:
-        return False
+    if filters.categories:
+        current = question.category_id
+        visited: set[str] = set()
+        in_scope = False
+        while current is not None and current not in visited:
+            if current in filters.categories:
+                in_scope = True
+                break
+            visited.add(current)
+            current = (filters.parent_by_id or {}).get(current)
+        if not in_scope:
+            return False
     if question.category_id in filters.excluded_categories:
         return False
     if filters.exam_collection_id and filters.exam_collection_id not in question.exam_collection_ids:

@@ -368,6 +368,28 @@ def test_quiz_access_distinguishes_owner_public_private_and_draft(migrated_datab
     assert owner_view.questions[0].correct_option_index == 1
 
 
+def test_server_game_source_enforces_visibility_and_returns_authoritative_answers(migrated_database) -> None:
+    database, _ = migrated_database
+    caps = CapabilityService(database)
+    access = QuizAccessService(database)
+    owner = caps.create_owner()
+    other = caps.create_owner()
+    private = QuizRepository(database).create_with_questions(
+        owner.owner_id, valid_quiz(status="published"), [valid_question()]
+    )
+    public = QuizRepository(database).create_with_questions(
+        other.owner_id,
+        valid_quiz(title="Shared public", visibility="public", status="published"),
+        [valid_question()],
+    )
+    with pytest.raises(PermissionError):
+        access.game_question_source(quiz_ids=(private.id,))
+    assert access.game_question_source(quiz_ids=(private.id,), capability=owner.token)[0].answer == 1
+    assert access.game_question_source(quiz_ids=(public.id,))[0].answer == 1
+    public_inventory = access.game_question_source(public_library=True)
+    assert all(question.id != private.questions[0].id for question in public_inventory)
+
+
 def test_private_play_access_stops_after_revocation_or_expiry(migrated_database) -> None:
     database, _ = migrated_database
     capabilities = CapabilityService(database)

@@ -63,6 +63,15 @@ def test_solo_practice_create_mode_is_valid() -> None:
     assert event.mode == "solo_practice"
 
 
+def test_create_event_accepts_only_bounded_taxonomy_filters():
+    event = _parse_event('{"event":"create","name":"Nova","categories":["category:science"],"difficulty":"mixed","question_count":7}')
+    assert event.categories == ["category:science"]
+    assert event.difficulty == "mixed"
+    assert event.question_count == 7
+    with pytest.raises(GameError):
+        _parse_event('{"event":"create","name":"Nova","categories":["private-category"]}')
+
+
 @pytest.mark.parametrize(
     "payload",
     [

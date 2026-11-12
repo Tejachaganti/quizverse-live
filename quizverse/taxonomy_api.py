@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from quizverse.persistence.db import Database
 from quizverse.persistence.models import Category, Tag
 from quizverse.quiz_api import ApiProblem
+from quizverse.taxonomy import CATEGORIES
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
 _MAX_ACTIVE_CATEGORIES = 500
@@ -71,6 +72,32 @@ def install_taxonomy_api(app: FastAPI, database: Database) -> None:
     @router.get("/categories", response_model=list[CategoryNodeResponse])
     def get_categories() -> list[CategoryNodeResponse]:
         categories = _load_active_categories(database)
+        if not categories:
+            with database.session() as session:
+                taxonomy_rows = session.scalar(select(func.count()).select_from(Category)) or 0
+            if taxonomy_rows:
+                return []
+            by_parent_definition: dict[str | None, list] = {}
+            for item in CATEGORIES:
+                by_parent_definition.setdefault(
+                    f"category:{item.parent_slug}" if item.parent_slug else None, []
+                ).append(item)
+
+            def built_in_tree(parent_id: str | None) -> list[CategoryNodeResponse]:
+                return [
+                    CategoryNodeResponse(
+                        id=item.id,
+                        slug=item.slug,
+                        name_key=item.name_key,
+                        display_name=item.display_name,
+                        parent_id=f"category:{item.parent_slug}" if item.parent_slug else None,
+                        sort_order=item.sort_order,
+                        children=built_in_tree(item.id),
+                    )
+                    for item in sorted(by_parent_definition.get(parent_id, []), key=lambda node: (node.sort_order, node.slug))
+                ]
+
+            return built_in_tree(None)
         by_parent: dict[str | None, list[Category]] = {}
         active_ids = {item.id for item in categories}
         for category in categories:

@@ -4,6 +4,19 @@
   const app = document.querySelector('#app');
   const toast = document.querySelector('#toast');
   const connectionStatus = document.querySelector('#connection-status');
+  const PREFERENCE_KEY = 'qv-player-preferences';
+  const DEFAULT_PREFERENCES = { learning_preset: 'teen_challenge', difficulty: 'medium', language: 'en', topics: {} };
+  function readPreferences() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(PREFERENCE_KEY) || 'null');
+      const presets = ['little_explorers', 'young_learners', 'junior_champions', 'teen_challenge', 'college_arena', 'expert_arena'];
+      const difficulties = ['easy', 'medium', 'hard', 'mixed'];
+      const weights = ['increase', 'normal', 'decrease', 'exclude'];
+      if (!raw || typeof raw !== 'object' || !presets.includes(raw.learning_preset) || !difficulties.includes(raw.difficulty) || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(raw.language || 'en') || !raw.topics || typeof raw.topics !== 'object' || Array.isArray(raw.topics) || Object.keys(raw.topics).length > 49) return { ...DEFAULT_PREFERENCES, topics: {} };
+      const topics = Object.fromEntries(Object.entries(raw.topics).filter(([key, value]) => typeof key === 'string' && key.length <= 128 && weights.includes(value)));
+      return { learning_preset: raw.learning_preset, difficulty: raw.difficulty, language: raw.language || 'en', topics };
+    } catch { return { ...DEFAULT_PREFERENCES, topics: {} }; }
+  }
   const state = {
     socket: null,
     connected: false,
@@ -14,6 +27,11 @@
     screen: 'home',
     view: 'play',
     selectedMode: 'classic',
+    preferences: readPreferences(),
+    categories: [],
+    publicQuizzes: [],
+    ownedQuizzes: [],
+    examCollections: [],
     soloReplayPending: false,
     reconnectDelay: 800,
     reconnectTimer: null,
@@ -121,7 +139,20 @@
     if (!actions) return;
     const picker = document.createElement('div');
     picker.className = 'mode-picker';
-    picker.innerHTML = '<label class="form-label" for="game-mode">Choose your arena format</label><select class="field" id="game-mode" name="game-mode"><option value="classic">Classic · 15 seconds · Momentum Shift</option><option value="speed_challenge">Speed Challenge · 10 seconds · no Momentum Shift</option></select><p class="microcopy mode-description" id="mode-description">Classic: 1,000 points plus up to 500 speed points. Momentum Shift is active.</p>';
+    const presetOptions = [['little_explorers','Little Explorers · ages 5–7'],['young_learners','Young Learners · ages 8–10'],['junior_champions','Junior Champions · ages 11–13'],['teen_challenge','Teen Challenge · ages 14–17'],['college_arena','College Arena · ages 18–23'],['expert_arena','Expert Arena · adults / advanced']];
+    const diffOptions = ['easy','medium','hard','mixed'];
+    picker.innerHTML = `<label class="form-label" for="game-mode">Choose your arena format</label><select class="field" id="game-mode" name="game-mode"><option value="classic">Classic · 15 seconds · Momentum Shift</option><option value="speed_challenge">Speed Challenge · 10 seconds · no Momentum Shift</option></select><p class="microcopy mode-description" id="mode-description">Classic: 1,000 points plus up to 500 speed points. Momentum Shift is active.</p><details class="match-settings"><summary>Learning preferences <span>(saved on this device)</span></summary><p class="microcopy">Content suitability only. This does not verify anyone’s age.</p><label>Learning preset<select class="field" id="player-preset">${presetOptions.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label><label>Preferred difficulty<select class="field" id="player-difficulty">${diffOptions.map(v=>`<option value="${v}">${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><div id="player-topic-settings"></div></details><details class="match-settings competitive-settings"><summary>Host match filters</summary><label>Question count<input class="field" id="match-count" type="number" min="1" max="20" value="10"></label><label>Difficulty<select class="field" id="match-difficulty">${diffOptions.map(v=>`<option value="${v}">${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><label>Learning suitability<select class="field" id="match-preset">${presetOptions.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label><label>Language<input class="field" id="match-language" maxlength="35" value="en"></label><label>Content scope<select class="field" id="match-scope"><option value="built_in">Built-in question bank</option><option value="public_library">Published public quizzes</option><option value="selected_quizzes">Choose published quizzes</option></select></label><label class="quiz-source-picker" hidden>Quizzes (select up to 20)<select class="field" id="match-quiz" multiple size="5" aria-label="Selected quizzes"></select></label><label>Exam collection<select class="field" id="match-exam"><option value="">Any / not applicable</option></select></label><label>Eligible categories<select class="field" id="match-categories" multiple size="5" aria-label="Eligible categories; leave empty for all"></select></label><p class="microcopy">Leave categories empty for all. Filter summaries are shared with the room.</p></details>`;
+    const drawTopics = () => {
+      const host = picker.querySelector('#player-topic-settings');
+      if (!state.categories.length) { host.innerHTML = '<p class="microcopy" role="status">Loading topic choices…</p>'; return; }
+      host.innerHTML = `<fieldset><legend>Topic preferences</legend>${state.categories.map(c=>`<label class="topic-preference">${escapeHtml(c.display_name)}<select class="field" data-topic-id="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.display_name)} preference">${[['increase','Increase'],['normal','Normal'],['decrease','Decrease'],['exclude','Exclude']].map(([v,l])=>`<option value="${v}" ${((state.preferences.topics[c.id]||'normal')===v)?'selected':''}>${l}</option>`).join('')}</select></label>`).join('')}</fieldset>`;
+    };
+    drawTopics();
+    if (!state.categories.length) fetch('/api/categories').then(r=>r.ok?r.json():[]).then(tree=>{const flatten=nodes=>nodes.flatMap(n=>[{id:n.id,display_name:n.display_name},...flatten(n.children||[])]);state.categories=flatten(tree);const validIds=new Set(state.categories.map(c=>c.id));state.preferences.topics=Object.fromEntries(Object.entries(state.preferences.topics).filter(([id])=>validIds.has(id)));try{localStorage.setItem(PREFERENCE_KEY,JSON.stringify(state.preferences));}catch{}drawTopics();picker.querySelector('#match-categories').innerHTML=state.categories.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)}</option>`).join('');}).catch(()=>{picker.querySelector('#player-topic-settings').innerHTML='<p class="microcopy">Topic choices could not be loaded.</p>';});
+    fetch('/api/quizzes?limit=100').then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.publicQuizzes=data.quizzes||[];const select=picker.querySelector('#match-quiz');select.innerHTML=state.publicQuizzes.map(q=>`<option value="${escapeHtml(q.id)}">${escapeHtml(q.title)}</option>`).join('');}).catch(()=>{});
+    const ownerCapability = sessionStorage.getItem('qv-owner-capability') || '';
+    if (ownerCapability) fetch('/api/quizzes/mine',{headers:{Authorization:`Bearer ${ownerCapability}`}}).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.ownedQuizzes=(data.quizzes||[]).filter(q=>q.status==='published');const select=picker.querySelector('#match-quiz');for(const q of state.ownedQuizzes)if(![...select.options].some(o=>o.value===q.id))select.add(new Option(`${q.title} · ${q.visibility}`,q.id));}).catch(()=>{});
+    fetch('/api/exam-collections').then(r=>r.ok?r.json():[]).then(items=>{state.examCollections=items;const exam=picker.querySelector('#match-exam');exam.innerHTML='<option value="">Any / not applicable</option>'+items.map(x=>`<option value="${escapeHtml(x.id)}">${escapeHtml(x.display_name)}</option>`).join('');}).catch(()=>{});
     actions.before(picker);
     const select = picker.querySelector('#game-mode');
     const teamOption = document.createElement('option');
@@ -164,6 +195,26 @@
         : 'No account. No downloads. Just a code and a little friendly rivalry.';
     };
     select.addEventListener('change', updateSelection);
+    picker.querySelector('#player-preset').value = state.preferences.learning_preset;
+    picker.querySelector('#player-difficulty').value = state.preferences.difficulty;
+    const playerLanguage = document.createElement('label');
+    playerLanguage.innerHTML = 'Preferred language<input class="field" id="player-language" maxlength="35" value="en" aria-label="Preferred content language">';
+    picker.querySelector('#player-topic-settings').before(playerLanguage);
+    picker.querySelector('#player-language').value = state.preferences.language;
+    // Competitive defaults are independent from this browser's private preferences.
+    picker.querySelector('#match-preset').value = 'teen_challenge';
+    picker.querySelector('#match-difficulty').value = 'medium';
+    const savePreferences = () => {
+      state.preferences.learning_preset = picker.querySelector('#player-preset').value;
+      state.preferences.difficulty = picker.querySelector('#player-difficulty').value;
+      state.preferences.language = picker.querySelector('#player-language').value.trim().toLowerCase() || 'en';
+      try { localStorage.setItem(PREFERENCE_KEY, JSON.stringify(state.preferences)); } catch { notify('Preferences could not be saved on this device.'); }
+    };
+    picker.addEventListener('change', event => {
+      if (event.target.matches('[data-topic-id]')) state.preferences.topics[event.target.dataset.topicId] = event.target.value;
+      if (event.target.matches('#player-preset,#player-difficulty,#player-language,[data-topic-id]')) savePreferences();
+      if (event.target.id === 'match-scope') picker.querySelector('.quiz-source-picker').hidden = event.target.value !== 'selected_quizzes';
+    });
     updateSelection();
   }
   function updateModePresentation() {
@@ -403,7 +454,11 @@
     const host = room.host_id === state.playerId;
     const connected = room.players.filter(player => player.connected).length;
     const hostName = room.players.find(player => player.id === room.host_id)?.name || 'the host';
-    return `<section class="room-layout"><div class="room-card"><button class="back-button" type="button" data-action="leave">← &nbsp;Leave arena</button><div class="section-kicker">YOUR PRIVATE GAME ROOM</div><h2>Gather your people.</h2><div class="room-code-row"><div class="room-code" aria-label="Room code ${escapeHtml(room.code)}">${escapeHtml(room.code)}</div><button class="btn btn-secondary" type="button" data-action="copy">▣ &nbsp;Copy code</button></div><p class="room-note">Share this code with your crew. Once two players are here, the host can launch the quiz.</p><div class="crew-heading"><h3>The crew</h3><span class="capacity">${room.players.length} / 8 players</span></div><div class="player-list" aria-live="polite">${room.players.map(playerRow).join('')}</div>${host ? `<button class="btn btn-primary btn-full" type="button" data-action="start" ${room.can_start ? '' : 'disabled'}>Launch the quiz &nbsp;✦</button><p class="microcopy">${room.can_start ? 'Everyone ready? Let the brain battle begin.' : 'Waiting for at least one more connected player.'}</p>` : `<div class="waiting-note"><span class="pulse-dot"></span>Waiting for ${escapeHtml(hostName)} to launch…</div>`}</div><aside class="side-stack"><section class="rules-card"><h3>Tonight's format</h3><div class="rule-line"><span>Players</span><strong>2–8</strong></div><div class="rule-line"><span>Questions</span><strong>10 rounds</strong></div><div class="rule-line"><span>Answer time</span><strong>15 seconds</strong></div></section><section class="rules-card"><h3>How scoring works</h3><div class="rule-line"><span>Correct answer</span><strong>1,000 pts</strong></div><div class="rule-line"><span>Speed bonus</span><strong>Up to 500</strong></div><p class="microcopy">The server records answer time. Faster correct answers earn a bigger bonus.</p></section><section class="rules-card momentum-card"><h3>Momentum Shift</h3><p class="momentum-copy">At the start of a round, players trailing the leader by 1–1,500 points qualify. A correct answer in the first 5 seconds earns a published <strong>+250 points</strong>. Nobody loses points.</p></section></aside></section>`;
+    const filters = room.match_filters || {};
+    const categoryNames = (filters.categories || []).map(id => state.categories.find(c=>c.id===id)?.display_name || id);
+    const examName = state.examCollections.find(x=>x.id===filters.exam_collection_id)?.display_name || (filters.exam_collection_id ? filters.exam_collection_id : 'Any');
+    const filterSummary = `<section class="rules-card"><h3>Shared question filters</h3><div class="rule-line"><span>Content</span><strong>${filters.content_scope === 'public_library' ? 'Published public library' : filters.content_scope === 'selected_quizzes' ? 'Selected quizzes' : 'Built-in bank'}</strong></div><div class="rule-line"><span>Difficulty</span><strong>${escapeHtml(filters.difficulty || 'Medium')}</strong></div><div class="rule-line"><span>Suitability</span><strong>${escapeHtml((filters.learning_preset || 'teen_challenge').replaceAll('_',' '))}</strong></div><div class="rule-line"><span>Language</span><strong>${escapeHtml(filters.language || 'en')}</strong></div><div class="rule-line"><span>Exam collection</span><strong>${escapeHtml(examName)}</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count} rounds</strong></div><div class="rule-line"><span>Topics</span><strong>${escapeHtml(categoryNames.length ? categoryNames.join(', ') : 'All eligible')}</strong></div><p class="microcopy">Everyone receives the same validated question sequence.</p></section>`;
+    return `<section class="room-layout"><div class="room-card"><button class="back-button" type="button" data-action="leave">← &nbsp;Leave arena</button><div class="section-kicker">YOUR PRIVATE GAME ROOM</div><h2>Gather your people.</h2><div class="room-code-row"><div class="room-code" aria-label="Room code ${escapeHtml(room.code)}">${escapeHtml(room.code)}</div><button class="btn btn-secondary" type="button" data-action="copy">▣ &nbsp;Copy code</button></div><p class="room-note">Share this code with your crew. Once two players are here, the host can launch the quiz.</p><div class="crew-heading"><h3>The crew</h3><span class="capacity">${room.players.length} / 8 players</span></div><div class="player-list" aria-live="polite">${room.players.map(playerRow).join('')}</div>${host ? `<button class="btn btn-primary btn-full" type="button" data-action="start" ${room.can_start ? '' : 'disabled'}>Launch the quiz &nbsp;✦</button><p class="microcopy">${room.can_start ? 'Everyone ready? Let the brain battle begin.' : 'Waiting for at least one more connected player.'}</p>` : `<div class="waiting-note"><span class="pulse-dot"></span>Waiting for ${escapeHtml(hostName)} to launch…</div>`}</div><aside class="side-stack">${filterSummary}<section class="rules-card"><h3>Tonight's format</h3><div class="rule-line"><span>Players</span><strong>2–8</strong></div><div class="rule-line"><span>Questions</span><strong>${filters.question_count || 10} rounds</strong></div><div class="rule-line"><span>Answer time</span><strong>15 seconds</strong></div></section><section class="rules-card"><h3>How scoring works</h3><div class="rule-line"><span>Correct answer</span><strong>1,000 pts</strong></div><div class="rule-line"><span>Speed bonus</span><strong>Up to 500</strong></div><p class="microcopy">The server records answer time. Faster correct answers earn a bigger bonus.</p></section><section class="rules-card momentum-card"><h3>Momentum Shift</h3><p class="momentum-copy">At the start of a round, players trailing the leader by 1–1,500 points qualify. A correct answer in the first 5 seconds earns a published <strong>+250 points</strong>. Nobody loses points.</p></section></aside></section>`;
   }
   function game() {
     const room = state.room;
@@ -444,6 +499,10 @@
     const offline = state.connected ? '' : '<div class="offline-banner" role="status">Connection interrupted — reconnecting to your arena…</div>';
     app.innerHTML = `${offline}${phase === 'waiting' ? lobby() : phase === 'results' ? results() : game()}`;
     updateModePresentation();
+    const roundTag = app.querySelector('.round-tag');
+    if (roundTag) roundTag.textContent = `ROUND ${String(Math.min(state.room.round, state.room.total_rounds)).padStart(2, '0')} / ${state.room.total_rounds}`;
+    const resultsLabel = app.querySelector('.results-card .section-kicker');
+    if (resultsLabel) resultsLabel.textContent = `${state.room.total_rounds} ROUNDS COMPLETE`;
     if (phase === 'question' || phase === 'countdown' || phase === 'reveal') {
       state.tick = setInterval(updateTimer, 100);
       updateTimer();
@@ -490,7 +549,25 @@
         return;
       }
       document.querySelector('#name-error').textContent = '';
-      if (action === 'create') send('create', { name: state.name, mode: document.querySelector('#game-mode')?.value || 'classic' });
+      if (action === 'create') {
+        const mode = document.querySelector('#game-mode')?.value || 'classic';
+        const solo = mode === 'solo_practice';
+        const scope = document.querySelector('#match-scope')?.value || 'built_in';
+        const selectedQuizzes = [...(document.querySelector('#match-quiz')?.selectedOptions || [])].slice(0, 20).map(option => option.value);
+        send('create', {
+          name: state.name, mode,
+          question_count: Number(document.querySelector('#match-count')?.value || 10),
+          difficulty: solo ? state.preferences.difficulty : document.querySelector('#match-difficulty')?.value || 'medium',
+          learning_preset: solo ? state.preferences.learning_preset : document.querySelector('#match-preset')?.value || 'teen_challenge',
+          topic_preferences: solo ? state.preferences.topics : {},
+          language: solo ? state.preferences.language : document.querySelector('#match-language')?.value || 'en',
+          categories: [...(document.querySelector('#match-categories')?.selectedOptions || [])].map(option => option.value),
+          content_scope: scope,
+          quiz_ids: scope === 'selected_quizzes' ? selectedQuizzes : [],
+          library_capability: scope === 'selected_quizzes' && selectedQuizzes.some(id=>state.ownedQuizzes.some(q=>q.id===id && q.visibility==='private')) ? (sessionStorage.getItem('qv-owner-capability') || undefined) : undefined,
+          exam_collection_id: document.querySelector('#match-exam')?.value || null,
+        });
+      }
       else {
         document.querySelector('#join-controls').hidden = false;
         document.querySelector('#room-code').focus();

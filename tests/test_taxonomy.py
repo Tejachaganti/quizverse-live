@@ -226,3 +226,13 @@ def test_taxonomy_endpoints_return_active_discovery_data_only(taxonomy_database:
         assert "Private secret quiz" not in response_text
         assert "Hidden answer key prompt" not in response_text
         assert private_quiz.id not in response_text
+
+
+def test_taxonomy_discovery_uses_existing_definitions_when_not_seeded(taxonomy_database: Database) -> None:
+    app = create_app(database=taxonomy_database)
+    with TestClient(app) as client:
+        response = client.get("/api/categories")
+    assert response.status_code == 200
+    roots = response.json()
+    assert len(roots) == 11
+    assert any(item["id"] == "category:science" for item in roots)

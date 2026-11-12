@@ -858,6 +858,46 @@ def test_solo_practice_immutable_config_one_player_start_and_capacity():
     assert asyncio.run(engine.start_game(code, player["player_id"]))["phase"] == Phase.COUNTDOWN
 
 
+def test_question_filters_freeze_common_sequence_and_keep_solo_preferences_private():
+    host_engine = GameEngine()
+    created = asyncio.run(host_engine.create_room("Host", selection={
+        "question_count": 3,
+        "categories": ["category:science"],
+        "difficulty": "medium",
+        "topic_preferences": {"category:science": "normal"},
+    }))
+    guest = asyncio.run(host_engine.join_room(created["state"]["code"], "Guest"))
+    code = created["state"]["code"]
+    host_started = asyncio.run(host_engine.start_game(code, created["player_id"]))
+    host_engine._show_question(host_engine._rooms[code])
+    host_started = asyncio.run(host_engine.snapshot(code, created["player_id"]))
+    guest_snapshot = asyncio.run(host_engine.snapshot(code, guest["player_id"]))
+    assert host_started["total_rounds"] == 3
+    assert host_started["match_filters"]["categories"] == ["category:science"]
+    assert "topic_preferences" not in host_started["match_filters"]
+    assert host_started["question"] == guest_snapshot["question"]
+    assert len(host_engine._rooms[code].questions) == 3
+    assert all(question.category_id in {"category:science", "category:science-space-astronomy"} for question in host_engine._rooms[code].questions)
+
+    solo_engine = GameEngine()
+    solo = asyncio.run(solo_engine.create_room("Solo", mode="solo_practice", selection={
+        "question_count": 2,
+        "difficulty": "medium",
+        "topic_preferences": {"category:science": "exclude"},
+    }))
+    assert "topic_preferences" not in solo["state"]["match_filters"]
+    assert asyncio.run(solo_engine.start_game(solo["state"]["code"], solo["player_id"]))["total_rounds"] == 2
+
+
+def test_question_filter_inventory_error_happens_before_countdown():
+    engine = GameEngine()
+    player = asyncio.run(engine.create_room("Solo", mode="solo_practice", selection={"difficulty": "hard"}))
+    with pytest.raises(GameError, match="eligible questions are available") as error:
+        asyncio.run(engine.start_game(player["state"]["code"], player["player_id"]))
+    assert error.value.code == "insufficient_inventory"
+    assert asyncio.run(engine.snapshot(player["state"]["code"], player["player_id"]))["phase"] == Phase.WAITING
+
+
 @pytest.mark.parametrize(("elapsed", "expected_score"), [(0.0, 1500), (7.5, 1250), (14.99, 1000)])
 def test_solo_practice_correct_answer_uses_authoritative_classic_scoring(elapsed, expected_score):
     engine, clock, player = create_solo_practice()

@@ -7,12 +7,15 @@ import hashlib
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Callable
 
 from quizverse.modes import CLASSIC_CONFIG, ModeConfig, TEAM_BATTLE_CONFIG, GameMode, resolve_mode
 from quizverse.questions import QUESTIONS, Question
+from quizverse.preferences import PlayerPreferences
+from quizverse.question_intelligence import SelectionFilters, select_questions
+from quizverse.taxonomy import CATEGORIES
 
 ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ROOM_CAPACITY = CLASSIC_CONFIG.max_players
@@ -96,6 +99,7 @@ class Room:
     team_assignment_roster: tuple[str, ...] = ()
     elimination_end_reason: str | None = None
     terminal_elimination_round: int | None = None
+    selection: dict[str, object] = field(default_factory=dict)
 
 
 class GameEngine:
@@ -107,13 +111,19 @@ class GameEngine:
         monotonic: Callable[[], float] = time.monotonic,
         wall_time: Callable[[], float] = time.time,
         question_bank: tuple[Question, ...] = QUESTIONS,
+        question_provider: Callable[[dict[str, object]], tuple[Question, ...]] | None = None,
     ) -> None:
         self._monotonic = monotonic
         self._wall_time = wall_time
         self._question_bank = question_bank
+        self._question_provider = question_provider
         self._rooms: dict[str, Room] = {}
         self._sessions: dict[str, tuple[str, str]] = {}
         self._lock = asyncio.Lock()
+
+    def set_question_provider(self, provider: Callable[[dict[str, object]], tuple[Question, ...]]) -> None:
+        """Install the authorization-aware content source used by this app instance."""
+        self._question_provider = provider
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -497,6 +507,15 @@ class GameEngine:
         return {
             "code": room.code,
             "mode": room.match_config.mode.value,
+            "match_filters": {
+                "content_scope": room.selection.get("content_scope", "built_in"),
+                "difficulty": room.selection.get("difficulty", "medium"),
+                "language": room.selection.get("language", "en"),
+                "learning_preset": room.selection.get("learning_preset", "teen_challenge"),
+                "categories": list(room.selection.get("categories", [])),
+                "question_count": room.match_config.question_count,
+                "exam_collection_id": room.selection.get("exam_collection_id"),
+            },
             "phase": room.phase.value,
             "host_id": room.host_id,
             "players": public_players,
@@ -530,7 +549,7 @@ class GameEngine:
     def _joined(self, room: Room, player: Player, token: str) -> dict[str, object]:
         return {"event": "joined", "token": token, "player_id": player.id, "state": self._snapshot(room, player.id)}
 
-    async def create_room(self, raw_name: object, mode: object = "classic") -> dict[str, object]:
+    async def create_room(self, raw_name: object, mode: object = "classic", selection: dict[str, object] | None = None) -> dict[str, object]:
         name = self.validate_name(raw_name)
         try:
             match_config = resolve_mode(mode)
@@ -541,12 +560,18 @@ class GameEngine:
             code = self._new_code()
             player_id = secrets.token_urlsafe(16)
             token = secrets.token_urlsafe(32)
+            chosen = dict(selection or {})
+            question_count = chosen.get("question_count", match_config.question_count)
+            if isinstance(question_count, bool) or not isinstance(question_count, int) or not 1 <= question_count <= 20:
+                raise GameError("invalid_question_count", "Question count must be between 1 and 20.")
+            configured = match_config if question_count == match_config.question_count else replace(match_config, question_count=question_count)
             room = Room(
                 code=code,
                 host_id=player_id,
                 created_at=now,
                 last_activity=now,
-                match_config=match_config,
+                match_config=configured,
+                selection=chosen,
             )
             player = Player(id=player_id, name=name, token_hash=self._token_hash(token))
             room.players[player_id] = player
@@ -625,17 +650,46 @@ class GameEngine:
                     raise GameError("not_enough_players", "At least four players must be connected to start Team Battle.")
             elif sum(player.connected for player in room.players.values()) < room.match_config.min_players:
                 raise GameError("not_enough_players", "At least two connected players are needed to start.")
-            if len(self._question_bank) < room.match_config.question_count:
-                raise GameError("question_bank_short", "The arena needs at least ten questions before it can start.")
             if room.match_config.mode == GameMode.TEAM_BATTLE:
                 roster = tuple(room.players)
                 if roster != room.team_assignment_roster or any(player.team_id not in TEAM_NAMES for player in room.players.values()):
                     for index, player in enumerate(room.players.values()):
                         player.team_id = "violet" if index % 2 == 0 else "cyan"
                     room.team_assignment_roster = roster
-            room.questions = tuple(
-                secrets.SystemRandom().sample(self._question_bank, room.match_config.question_count)
-            )
+            try:
+                parent_by_id = {f"category:{item.slug}": f"category:{item.parent_slug}" if item.parent_slug else None for item in CATEGORIES}
+                preferences = PlayerPreferences.parse({
+                    "learning_preset": room.selection.get("learning_preset", "teen_challenge"),
+                    "difficulty": room.selection.get("difficulty", "medium"),
+                    "language": room.selection.get("language", "en"),
+                    "topics": room.selection.get("topic_preferences", {}),
+                })
+                source = str(room.selection.get("content_scope", "built_in"))
+                if source == "built_in" and self._question_provider is None:
+                    inventory = self._question_bank
+                elif self._question_provider is not None:
+                    inventory = self._question_provider(room.selection)
+                else:
+                    raise ValueError("Quiz Library selection is unavailable in this game server.")
+                eligible = select_questions(
+                    inventory,
+                    SelectionFilters(
+                        count=room.match_config.question_count,
+                        difficulty=preferences.difficulty,
+                        language=preferences.language,
+                        learning_preset=preferences.learning_preset,
+                        categories=frozenset(room.selection.get("categories", [])),
+                        exam_collection_id=room.selection.get("exam_collection_id") if isinstance(room.selection.get("exam_collection_id"), str) else None,
+                        question_format="multiple_choice",
+                        parent_by_id=parent_by_id,
+                        topic_preferences=preferences.topics,
+                    ),
+                )
+                room.questions = tuple(eligible)
+            except PermissionError as error:
+                raise GameError("content_not_authorized", str(error)) from error
+            except (ValueError, TypeError) as error:
+                raise GameError("insufficient_inventory", str(error)) from error
             room.round_index = 0
             for player in room.players.values():
                 player.score = 0

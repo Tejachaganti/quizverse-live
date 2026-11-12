@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import re
 from typing import Mapping
 
 
@@ -35,6 +36,7 @@ TOPIC_WEIGHTS: Mapping[TopicPreference, float] = {
 class PlayerPreferences:
     learning_preset: LearningPreset = LearningPreset.TEEN_CHALLENGE
     difficulty: str = "medium"
+    language: str = "en"
     topics: Mapping[str, TopicPreference] = field(default_factory=dict)
 
     @classmethod
@@ -46,6 +48,9 @@ class PlayerPreferences:
             difficulty = raw.get("difficulty", "medium")
             if difficulty not in {"easy", "medium", "hard", "mixed"}:
                 raise ValueError
+            language = raw.get("language", "en")
+            if not isinstance(language, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", language):
+                raise ValueError
             raw_topics = raw.get("topics", {})
             if not isinstance(raw_topics, dict) or len(raw_topics) > 100:
                 raise ValueError
@@ -56,7 +61,7 @@ class PlayerPreferences:
             }
             if len(topics) != len(raw_topics):
                 raise ValueError
-            return cls(preset, difficulty, topics)
+            return cls(preset, difficulty, language.lower(), topics)
         except (ValueError, TypeError):
             return cls()
 

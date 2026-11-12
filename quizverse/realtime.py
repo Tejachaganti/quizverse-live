@@ -14,8 +14,10 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from quizverse.engine import GameEngine, GameError
+from quizverse.questions import QUESTIONS
 from quizverse.ai_generation import AIProvider, GenerationService
 from quizverse.persistence.authorization import QuizAccessService
 from quizverse.persistence.db import Database
@@ -150,9 +152,30 @@ def create_app(
     database: Database | None = None,
     ai_provider: AIProvider | None = None,
 ) -> FastAPI:
-    hub = ConnectionHub(engine)
     persistence = database or Database()
     owns_database = database is None
+    quiz_access = QuizAccessService(persistence)
+
+    def load_game_questions(selection: dict[str, object]):
+        try:
+            if selection.get("content_scope", "built_in") == "built_in":
+                try:
+                    return quiz_access.built_in_game_questions()
+                except SQLAlchemyError:
+                    return QUESTIONS
+            return quiz_access.game_question_source(
+                quiz_ids=tuple(selection.get("quiz_ids", ())),
+                capability=selection.get("library_capability") if isinstance(selection.get("library_capability"), str) else None,
+                public_library=selection.get("content_scope") == "public_library",
+            )
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        except SQLAlchemyError as error:
+            raise ValueError("Quiz storage is temporarily unavailable. Try starting this match again.") from error
+
+    active_engine = engine or GameEngine()
+    active_engine.set_question_provider(load_game_questions)
+    hub = ConnectionHub(active_engine)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -174,7 +197,7 @@ def create_app(
     app.state.hub = hub
     app.state.database = persistence
 
-    install_quiz_api(app, QuizAccessService(persistence), GenerationService(ai_provider))
+    install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_taxonomy_api(app, persistence)
     install_exam_collection_api(app, persistence)
 
@@ -228,7 +251,11 @@ def create_app(
                     if isinstance(event, CreateEvent):
                         if identity is not None:
                             raise GameError("already_joined", "This connection already belongs to an arena.")
-                        joined = await hub.engine.create_room(event.name, mode=event.mode)
+                        joined = await hub.engine.create_room(
+                            event.name,
+                            mode=event.mode,
+                            selection=event.model_dump(exclude={"event", "name", "mode"}),
+                        )
                         identity = (str(joined["state"]["code"]), str(joined["player_id"]))
                         await hub.attach(identity, websocket)
                         await hub.send(websocket, "joined", joined["state"], token=joined["token"], player_id=joined["player_id"])

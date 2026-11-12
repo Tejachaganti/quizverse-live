@@ -1,6 +1,9 @@
 """Small, reviewed general-knowledge bank used by the server engine."""
 
+import hashlib
 from dataclasses import dataclass
+
+from quizverse.taxonomy import legacy_category_slug
 
 
 @dataclass(frozen=True, slots=True)
@@ -9,6 +12,23 @@ class Question:
     prompt: str
     options: tuple[str, str, str, str]
     answer: int
+    id: str = ""
+    category_id: str | None = None
+    difficulty: str = "medium"
+    language: str = "en"
+    learning_levels: tuple[str, ...] = ()
+    review_status: str = "reviewed"
+    question_format: str = "multiple_choice"
+    exam_collection_ids: frozenset[str] = frozenset()
+    provenance: str = "built_in_reviewed"
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "id", hashlib.sha256(self.prompt.encode("utf-8")).hexdigest())
+        if self.category_id is None:
+            slug = legacy_category_slug(self.category, self.provenance)
+            if slug:
+                object.__setattr__(self, "category_id", f"category:{slug}")
 
 
 QUESTIONS: tuple[Question, ...] = (

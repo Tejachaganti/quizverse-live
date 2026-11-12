@@ -7,7 +7,7 @@ not call ``QuizRepository.get`` directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Iterable
 
@@ -17,7 +17,10 @@ from quizverse.persistence.capabilities import (
     IssuedCapability,
 )
 from quizverse.persistence.db import Database
-from quizverse.persistence.models import Quiz
+from quizverse.persistence.models import Category, ExamCollection, ExamCollectionCategory, Quiz
+from sqlalchemy import select
+from quizverse.questions import Question
+from quizverse.taxonomy import legacy_category_slug
 from quizverse.persistence.repositories import (
     QuestionRecord,
     QuizRecord,
@@ -165,10 +168,18 @@ def _author_projection(quiz: Quiz) -> AuthorQuizView:
     )
 
 
+def _game_category_id(question, quiz) -> str | None:
+    if question.category_id is not None:
+        return question.category_id
+    slug = legacy_category_slug(question.category or quiz.category, question.provenance)
+    return f"category:{slug}" if slug else quiz.category_id
+
+
 class QuizAccessService:
     """Resolve owner, editor, and player access before serializing quiz records."""
 
     def __init__(self, database: Database) -> None:
+        self._database = database
         self._capabilities = CapabilityService(database)
         self._quizzes = QuizRepository(database)
 
@@ -386,6 +397,81 @@ class QuizAccessService:
             if shared_owner_id is None or shared_owner_id != quiz.owner_id:
                 return None
         return _player_projection(quiz)
+
+    def game_question_source(
+        self, *, quiz_ids: tuple[str, ...] = (), capability: str | None = None, public_library: bool = False
+    ) -> tuple[Question, ...]:
+        """Return answer keys only to the server after validating quiz visibility/capabilities."""
+        if public_library:
+            quizzes = self._quizzes.list_public_published(limit=100)
+        else:
+            if not quiz_ids or len(quiz_ids) > 20 or len(set(quiz_ids)) != len(quiz_ids):
+                raise ValueError("Select between 1 and 20 unique quizzes.")
+            quizzes = []
+            for quiz_id in quiz_ids:
+                quiz = self._quizzes.get(quiz_id)
+                if quiz is None or quiz.status != "published":
+                    raise PermissionError("A selected quiz is unavailable or unpublished.")
+                if quiz.visibility == "private":
+                    owner_id = self._capabilities.validate(capability or "", scope=CapabilityScope.OWNER)
+                    reader_id = self._capabilities.validate(capability or "", scope=CapabilityScope.QUIZ_READ, quiz_id=quiz_id)
+                    if quiz.owner_id not in {owner_id, reader_id}:
+                        raise PermissionError("A selected private quiz needs its owner or read capability.")
+                elif quiz.visibility != "public":
+                    raise PermissionError("A selected quiz is not playable.")
+                quizzes.append(quiz)
+        if not quizzes or any(question.question_format != "multiple_choice" for quiz in quizzes for question in quiz.questions):
+            raise ValueError("The selected content has no playable MCQ inventory or includes an unsupported question format.")
+        exam_ids = self._exam_ids_by_category()
+
+        return tuple(
+            Question(
+                category=question.category or quiz.category,
+                prompt=question.prompt,
+                options=(question.option_a, question.option_b, question.option_c, question.option_d),  # type: ignore[arg-type]
+                answer=question.correct_option_index,  # type: ignore[arg-type]
+                id=question.id,
+                category_id=_game_category_id(question, quiz),
+                difficulty=question.difficulty or quiz.difficulty,
+                language=question.language,
+                learning_levels=tuple(question.learning_levels or ()),
+                review_status=question.review_status,
+                question_format=question.question_format,
+                exam_collection_ids=exam_ids(_game_category_id(question, quiz)),
+                provenance=question.provenance,
+            )
+            for quiz in quizzes for question in quiz.questions
+        )
+
+    def built_in_game_questions(self) -> tuple[Question, ...]:
+        """Attach active exam suitability mappings to the reviewed built-in bank."""
+        from quizverse.questions import QUESTIONS
+
+        exam_ids = self._exam_ids_by_category()
+        return tuple(replace(question, exam_collection_ids=exam_ids(question.category_id)) for question in QUESTIONS)
+
+    def _exam_ids_by_category(self):
+        with self._database.session() as session:
+            mappings = session.execute(
+                select(ExamCollectionCategory.category_id, ExamCollectionCategory.collection_id)
+                .join(ExamCollection, ExamCollection.id == ExamCollectionCategory.collection_id)
+                .where(ExamCollection.is_active.is_(True))
+            ).all()
+            parents = {category.id: category.parent_id for category in session.scalars(select(Category))}
+        collections_by_category: dict[str, set[str]] = {}
+        for category_id, collection_id in mappings:
+            collections_by_category.setdefault(category_id, set()).add(collection_id)
+
+        def exam_ids(category_id: str | None) -> frozenset[str]:
+            found: set[str] = set()
+            visited: set[str] = set()
+            while category_id is not None and category_id not in visited:
+                visited.add(category_id)
+                found.update(collections_by_category.get(category_id, ()))
+                category_id = parents.get(category_id)
+            return frozenset(found)
+
+        return exam_ids
 
     def get_authorized_quiz(
         self, quiz_id: str, *, capability: str | None = None
