@@ -23,6 +23,7 @@ from quizverse.persistence.models import (
     PlayerCredential,
     PlayerProfile,
 )
+from quizverse.persistence.ratings import RatingService
 
 
 class PlayerIdentityError(Exception):
@@ -245,8 +246,13 @@ class ProcessRateLimiter:
 class MatchHistoryService:
     """Persists engine-built terminal payloads and offers profile-scoped history."""
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, rating_service: RatingService | None = None) -> None:
         self._database = database
+        self._rating_service = rating_service or RatingService(database)
+
+    @property
+    def rating_service(self) -> RatingService:
+        return self._rating_service
 
     @staticmethod
     def digest_result(result: dict[str, object]) -> str:
@@ -263,6 +269,13 @@ class MatchHistoryService:
             existing = session.scalar(select(CompetitiveMatch).where(CompetitiveMatch.engine_match_id == clean["engine_match_id"]))
             if existing is not None:
                 if hmac.compare_digest(existing.result_digest, digest):
+                    # Idempotent retry: if match is eligible but was not rated, attempt safe reconciliation
+                    if not existing.is_rated and existing.rating_ineligible_reason is None:
+                        eligible, reason = self._rating_service.check_eligibility(clean, session=session)
+                        if eligible:
+                            self._rating_service.apply_match_ratings(session, existing, existing.participants)
+                        else:
+                            existing.rating_ineligible_reason = reason
                     return False
                 raise MatchResultError("A completed match ID was retried with conflicting result data.")
             ids = [entry["player_id"] for entry in clean["participants"] if entry["player_id"] is not None]
@@ -272,7 +285,7 @@ class MatchHistoryService:
                 raise MatchResultError("A profile cannot occupy more than one participant seat in a match.")
             match_id = secrets.token_hex(16)
             context = clean["result_context"]
-            session.add(CompetitiveMatch(
+            match = CompetitiveMatch(
                 id=match_id,
                 engine_match_id=clean["engine_match_id"],
                 mode=clean["mode"],
@@ -284,9 +297,11 @@ class MatchHistoryService:
                 question_set_hash=clean["question_set_hash"],
                 result_digest=digest,
                 result_context=context,
-            ))
+                is_rated=False,
+            )
+            session.add(match)
             session.flush()
-            session.add_all([
+            participants = [
                 MatchParticipant(
                     id=secrets.token_hex(16), match_id=match_id, player_id=entry["player_id"],
                     seat_index=entry["seat_index"], team_id=entry["team_id"], final_score=entry["final_score"],
@@ -294,7 +309,8 @@ class MatchHistoryService:
                     outcome=entry["outcome"], disconnect_count=entry["disconnect_count"],
                     reconnect_expired=entry["reconnect_expired"], forfeited=entry["forfeited"],
                 ) for entry in clean["participants"]
-            ])
+            ]
+            session.add_all(participants)
             session.add_all([
                 MatchTeam(
                     id=secrets.token_hex(16), match_id=match_id, team_id=team["team_id"], score=team["score"],
@@ -302,6 +318,16 @@ class MatchHistoryService:
                     placement=team["placement"], outcome=team["outcome"],
                 ) for team in clean["teams"]
             ])
+            session.flush()
+
+            # Atomic rating update in the same database transaction
+            eligible, reason = self._rating_service.check_eligibility(clean, session=session)
+            if eligible:
+                self._rating_service.apply_match_ratings(session, match, participants)
+            else:
+                match.is_rated = False
+                match.rating_ineligible_reason = reason
+
             return True
 
     @staticmethod

@@ -18,6 +18,10 @@ from quizverse.persistence.player_identity import (
     PlayerIdentityService,
     ProcessRateLimiter,
 )
+from quizverse.persistence.ratings import (
+    ELIGIBLE_MODES,
+    RatingService,
+)
 from quizverse.quiz_api import ApiProblem
 
 
@@ -55,6 +59,76 @@ _MODES = Literal[
 ]
 
 
+class LeaderboardEntry(BaseModel):
+    rank: int
+    player_id: str
+    display_name: str
+    rating: int
+    rated_match_count: int
+    wins: int
+    losses: int
+    draws: int
+    is_provisional: bool
+    provisional: bool
+    algorithm_version: str
+
+
+class LeaderboardResponse(BaseModel):
+    scope: str
+    mode: str | None
+    total: int
+    established_total: int
+    provisional_total: int
+    limit: int
+    offset: int
+    cursor: str | None
+    next_cursor: str | None
+    has_more: bool
+    as_of: datetime
+    rankings: list[LeaderboardEntry]
+
+
+class PlayerRatingDetail(BaseModel):
+    rating: int
+    rated_match_count: int
+    wins: int
+    losses: int
+    draws: int
+    is_provisional: bool
+    provisional: bool
+    algorithm_version: str
+    updated_at: datetime
+
+
+class RatingHistoryEntry(BaseModel):
+    id: str
+    scope: str
+    match_id: str
+    mode: str
+    prior_rating: int
+    rating_delta: int
+    new_rating: int
+    actual_score: float
+    expected_score: float
+    algorithm_version: str
+    created_at: datetime
+
+
+class PlayerRatingsSummaryResponse(BaseModel):
+    player_id: str
+    display_name: str
+    global_rating: PlayerRatingDetail | None
+    mode_ratings: dict[str, PlayerRatingDetail]
+    recent_changes: list[RatingHistoryEntry]
+
+
+class PlayerRatingHistoryResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    history: list[RatingHistoryEntry]
+
+
 def _authenticated_header(authorization: str | None) -> str:
     if authorization is None:
         raise ApiProblem(401, "invalid_player_credential", "A valid player credential is required.")
@@ -82,8 +156,10 @@ def install_player_api(
     identities: PlayerIdentityService,
     history: MatchHistoryService,
     tickets: LiveIdentityTickets,
+    ratings: RatingService | None = None,
 ) -> None:
     router = APIRouter(prefix="/api")
+    rating_service = ratings or history.rating_service
     limiter = ProcessRateLimiter(limit=5, window_seconds=60)
 
     def rate_limit(request: Request, action: str, identity: str = "") -> None:
@@ -166,5 +242,79 @@ def install_player_api(
     async def my_competitive_stats(authorization: Annotated[str | None, Header()] = None) -> dict[str, object]:
         player = await authenticated(authorization)
         return await asyncio.to_thread(history.stats, str(player["id"]))
+
+    @router.get("/rankings", response_model=LeaderboardResponse)
+    async def get_rankings(
+        scope: Literal["global", "mode"] = "global",
+        mode: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+        cursor: str | None = None,
+    ) -> LeaderboardResponse:
+        if scope == "mode":
+            if not mode:
+                raise ApiProblem(422, "invalid_ranking_scope", "A valid mode parameter is required when scope=mode.")
+            if mode not in ELIGIBLE_MODES:
+                raise ApiProblem(422, "invalid_ranking_mode", f"The mode '{mode}' is not eligible for competitive rankings.")
+        else:
+            mode = None
+
+        try:
+            data = await asyncio.to_thread(
+                rating_service.leaderboard,
+                scope=scope,
+                mode=mode,
+                limit=limit,
+                offset=offset,
+                cursor=cursor,
+            )
+        except ValueError as error:
+            raise ApiProblem(422, "invalid_ranking_cursor", "The leaderboard cursor is invalid or expired.") from error
+        return LeaderboardResponse.model_validate(data)
+
+    @router.get("/player-profiles/me/ratings", response_model=PlayerRatingsSummaryResponse)
+    async def get_my_ratings(
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> PlayerRatingsSummaryResponse:
+        player = await authenticated(authorization)
+        try:
+            data = await asyncio.to_thread(
+                rating_service.player_ratings_summary,
+                str(player["id"]),
+            )
+        except ValueError as error:
+            raise ApiProblem(404, "player_not_found", str(error)) from error
+        return PlayerRatingsSummaryResponse.model_validate(data)
+
+    @router.get("/player-profiles/me/ratings/history", response_model=PlayerRatingHistoryResponse)
+    async def get_my_rating_history(
+        authorization: Annotated[str | None, Header()] = None,
+        scope: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+    ) -> PlayerRatingHistoryResponse:
+        player = await authenticated(authorization)
+        if scope:
+            if scope == "global":
+                pass
+            elif scope.startswith("mode:"):
+                mode = scope.partition(":")[2]
+                if mode not in ELIGIBLE_MODES:
+                    raise ApiProblem(422, "invalid_rating_scope", f"Unsupported rating scope '{scope}'.")
+            elif scope in ELIGIBLE_MODES:
+                scope = f"mode:{scope}"
+            else:
+                raise ApiProblem(422, "invalid_rating_scope", f"Unsupported rating scope '{scope}'.")
+        try:
+            data = await asyncio.to_thread(
+                rating_service.player_rating_history,
+                str(player["id"]),
+                scope=scope,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as error:
+            raise ApiProblem(404, "player_not_found", str(error)) from error
+        return PlayerRatingHistoryResponse.model_validate(data)
 
     app.include_router(router)

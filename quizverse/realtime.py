@@ -240,6 +240,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        try:
+            reconciled_match_ids = await asyncio.to_thread(match_history.rating_service.reconcile_unrated_matches)
+            if reconciled_match_ids:
+                logger.info("Reconciled previously stored competitive matches into Elo ratings. match_count=%s", len(reconciled_match_ids))
+        except Exception as error:
+            logger.error("Stored match rating reconciliation failed; it will retry on the next startup. error_type=%s", type(error).__name__)
         stop = asyncio.Event()
         task = asyncio.create_task(hub.scheduler(stop), name="quizverse-room-scheduler")
         try:
@@ -257,6 +263,7 @@ def create_app(
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
     app.state.hub = hub
     app.state.database = persistence
+    app.state.rating_service = match_history.rating_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)

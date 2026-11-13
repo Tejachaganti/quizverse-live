@@ -47,6 +47,21 @@
     profileNotice: '',
     profilePage: 0,
     oneTimeCredential: '',
+    rankingsScope: 'global',
+    rankingsMode: 'classic',
+    rankingsData: null,
+    rankingsLoading: false,
+    rankingsError: '',
+    rankingsPage: 0,
+    rankingsRequestId: 0,
+    myRatings: null,
+    myRatingsLoading: false,
+    ratingHistory: [],
+    ratingHistoryTotal: 0,
+    ratingHistoryPage: 0,
+    ratingHistoryScope: '',
+    ratingHistoryLoading: false,
+    ratingHistoryError: '',
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -562,8 +577,132 @@
       return;
     }
     const stats = state.profileStats || { history_available: false, completed_matches: 0, wins: 0, losses: 0, draws: 0, mode_breakdown: [] };
+    const myRatings = state.myRatings?.global_rating;
+    const ratingCard = myRatings ? `
+      <h2>Competitive Elo Rating</h2>
+      <div class="user-rating-banner">
+        <div class="user-rating-value">${myRatings.rating}</div>
+        <div class="user-rating-meta">
+          <strong>Global Rating &nbsp;${myRatings.is_provisional ? '<span class="badge-status badge-provisional">PROVISIONAL</span>' : '<span class="badge-status badge-established">ESTABLISHED</span>'}</strong>
+          <span>${myRatings.rated_match_count} rated matches · ${myRatings.wins} Wins · ${myRatings.draws} Draws · ${myRatings.losses} Losses</span>
+        </div>
+        ${state.myRatings?.recent_changes?.length ? `
+        <div class="recent-changes-pills" title="Recent rating movements">
+          ${state.myRatings.recent_changes.slice(0, 5).map(c => `<span class="delta-pill ${c.rating_delta > 0 ? 'delta-pos' : c.rating_delta < 0 ? 'delta-neg' : 'delta-zero'}">${c.rating_delta > 0 ? '+' : ''}${c.rating_delta}</span>`).join('')}
+        </div>` : ''}
+      </div>` : (state.profileMatches.length ? '<p class="profile-empty">Casual matches completed. Complete an eligible competitive match to establish your Elo rating.</p>' : '<p class="profile-empty">No rated competitive matches completed yet.</p>');
     const matches = state.profileMatches.map(match => `<article class="profile-match"><div><strong>${escapeHtml(match.mode.replaceAll('_', ' '))}</strong><span>${escapeHtml(new Date(match.completed_at).toLocaleString())}</span></div><div><strong>${escapeHtml(match.outcome.replaceAll('_', ' '))}</strong><span>${match.placement ? `Place ${match.placement}` : escapeHtml(match.result_kind)}</span></div><div><strong>${match.final_score ?? (match.team?.score ?? '—')}</strong><span>${match.correct_count ?? (match.team?.correct_count ?? 'Shared result')}</span></div></article>`).join('');
-    app.innerHTML = `<section class="profile-card"><div class="section-kicker">PLAYER PROFILE</div><h1>${escapeHtml(state.profile.display_name)}</h1><p class="subcopy">Pseudonymous identity · no email or personal details</p>${state.profileNotice ? `<p class="library-message" role="status">${escapeHtml(state.profileNotice)}</p>` : ''}<form class="profile-name-form"><label class="form-label" for="profile-name-update">Display name</label><input class="field" id="profile-name-update" maxlength="24" required value="${escapeHtml(state.profile.display_name)}"><button class="btn btn-secondary" type="button" data-action="profile-update">Save name</button></form>${state.oneTimeCredential ? '<div class="profile-warning" role="status">A new credential is ready. Copy it now; it will not be shown again. If lost, it cannot be recovered.</div><button class="btn btn-secondary" type="button" data-action="profile-copy-credential">Copy one-time credential</button>' : ''}<div class="profile-actions"><button class="btn btn-secondary" type="button" data-action="profile-rotate">Rotate credential</button><button class="btn btn-quiet" type="button" data-action="profile-logout">Sign out on this tab</button><button class="btn btn-danger" type="button" data-action="profile-delete">Delete profile</button></div><h2>Competitive record</h2>${stats.history_available ? `<div class="profile-stats"><article><strong>${stats.completed_matches}</strong><span>Matches</span></article><article><strong>${stats.wins}</strong><span>Wins</span></article><article><strong>${stats.draws}</strong><span>Draws</span></article><article><strong>${stats.losses}</strong><span>Losses</span></article></div>` : '<p class="profile-empty">No persisted match history yet. This is different from a zero win or loss record.</p>'}<h2>Match history</h2>${matches || '<p class="profile-empty">No profile-linked completed matches yet. Join or create a match while signed in to add one.</p>'}${state.profileHistoryTotal > state.profileMatches.length ? `<button class="btn btn-secondary" type="button" data-action="profile-more">Load more</button>` : ''}<p class="microcopy">Profile deletion revokes credentials and anonymizes this profile in retained match records. Match integrity facts may remain without identifying details.</p></section>`;
+    const ratingHistoryRows = state.ratingHistory.map(entry => `<article class="rating-history-row"><div><strong>${escapeHtml(entry.mode.replaceAll('_', ' '))} · ${escapeHtml(entry.scope === 'global' ? 'Global' : entry.scope.replace('mode:', 'Mode: ').replaceAll('_', ' '))}</strong><span>${escapeHtml(new Date(entry.created_at).toLocaleString())}</span></div><div><strong class="${entry.rating_delta > 0 ? 'delta-pos' : entry.rating_delta < 0 ? 'delta-neg' : 'delta-zero'}">${entry.rating_delta > 0 ? '+' : ''}${entry.rating_delta}</strong><span>${entry.prior_rating} → ${entry.new_rating}</span></div></article>`).join('');
+    const ratingHistoryPages = Math.max(1, Math.ceil(state.ratingHistoryTotal / 20));
+    const ratingHistoryHtml = state.ratingHistoryLoading
+      ? '<p class="profile-empty" role="status">Loading rating history…</p>'
+      : state.ratingHistoryError
+        ? `<p class="library-message" role="alert">${escapeHtml(state.ratingHistoryError)} <button class="btn btn-quiet" type="button" data-action="rating-history-retry">Retry</button></p>`
+        : ratingHistoryRows
+          ? `${ratingHistoryRows}<div class="rankings-pagination"><button class="btn btn-secondary" type="button" data-action="rating-history-prev" ${state.ratingHistoryPage === 0 ? 'disabled' : ''}>Previous</button><span class="microcopy">Page ${state.ratingHistoryPage + 1} of ${ratingHistoryPages}</span><button class="btn btn-secondary" type="button" data-action="rating-history-next" ${state.ratingHistoryPage + 1 >= ratingHistoryPages ? 'disabled' : ''}>Next</button></div>`
+          : '<p class="profile-empty">No rating changes yet. Eligible signed-in matches will appear here.</p>';
+    const ratingScopes = [['', 'All scopes'], ['global', 'Global'], ...RANKING_MODES.filter(mode => mode.id !== 'global').map(mode => [`mode:${mode.id}`, mode.name])];
+    const ratingScopeOptions = ratingScopes.map(([value, label]) => `<option value="${value}" ${state.ratingHistoryScope === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+    app.innerHTML = `<section class="profile-card"><div class="section-kicker">PLAYER PROFILE</div><h1>${escapeHtml(state.profile.display_name)}</h1><p class="subcopy">Pseudonymous identity · no email or personal details</p>${state.profileNotice ? `<p class="library-message" role="status">${escapeHtml(state.profileNotice)}</p>` : ''}<form class="profile-name-form"><label class="form-label" for="profile-name-update">Display name</label><input class="field" id="profile-name-update" maxlength="24" required value="${escapeHtml(state.profile.display_name)}"><button class="btn btn-secondary" type="button" data-action="profile-update">Save name</button></form>${state.oneTimeCredential ? '<div class="profile-warning" role="status">A new credential is ready. Copy it now; it will not be shown again. If lost, it cannot be recovered.</div><button class="btn btn-secondary" type="button" data-action="profile-copy-credential">Copy one-time credential</button>' : ''}<div class="profile-actions"><button class="btn btn-secondary" type="button" data-action="profile-rotate">Rotate credential</button><button class="btn btn-quiet" type="button" data-action="profile-logout">Sign out on this tab</button><button class="btn btn-danger" type="button" data-action="profile-delete">Delete profile</button></div>${ratingCard}<h2>Rating history</h2><label class="form-label" for="rating-history-scope">Filter rating scope</label><select class="field rating-history-scope" id="rating-history-scope">${ratingScopeOptions}</select>${ratingHistoryHtml}<h2>Competitive record</h2>${stats.history_available ? `<div class="profile-stats"><article><strong>${stats.completed_matches}</strong><span>Matches</span></article><article><strong>${stats.wins}</strong><span>Wins</span></article><article><strong>${stats.draws}</strong><span>Draws</span></article><article><strong>${stats.losses}</strong><span>Losses</span></article></div>` : '<p class="profile-empty">No persisted match history yet. This is different from a zero win or loss record.</p>'}<h2>Match history</h2>${matches || '<p class="profile-empty">No profile-linked completed matches yet. Join or create a match while signed in to add one.</p>'}${state.profileHistoryTotal > state.profileMatches.length ? `<button class="btn btn-secondary" type="button" data-action="profile-more">Load more</button>` : ''}<p class="microcopy">Profile deletion revokes credentials and anonymizes this profile in retained match records. Match integrity facts may remain without identifying details.</p></section>`;
+  }
+  const RANKING_MODES = [
+    { id: 'global', name: 'Global' },
+    { id: 'classic', name: 'Classic' },
+    { id: 'speed_challenge', name: 'Speed Challenge' },
+    { id: 'elimination', name: 'Elimination' },
+    { id: 'quiz_royale', name: 'Quiz Royale' },
+    { id: 'power_play', name: 'Power Play' },
+    { id: 'bluff_master', name: 'Bluff Master' },
+  ];
+  function rankingsScreen() {
+    app.classList.remove('library-shell');
+    if (state.rankingsLoading && !state.rankingsData) {
+      app.innerHTML = '<section class="rankings-card"><div class="loading-state"><span class="loader"></span><p>Loading competitive rankings…</p></div></section>';
+      return;
+    }
+    const activeScope = state.rankingsScope;
+    const activeMode = state.rankingsMode;
+    const scopesNav = RANKING_MODES.map(m => {
+      const isGlobal = m.id === 'global';
+      const active = isGlobal ? activeScope === 'global' : (activeScope === 'mode' && activeMode === m.id);
+      return `<button class="btn btn-scope ${active ? 'active' : ''}" type="button" data-action="rankings-scope" data-scope="${m.id}">${escapeHtml(m.name)}</button>`;
+    }).join('');
+
+    const myRatingObj = state.myRatings ? (
+      activeScope === 'global' ? state.myRatings.global_rating : state.myRatings.mode_ratings?.[activeMode]
+    ) : null;
+
+    let userBanner = '';
+    if (state.profile) {
+      if (myRatingObj) {
+        userBanner = `<div class="user-rating-banner"><div class="user-rating-value">${myRatingObj.rating}</div><div class="user-rating-meta"><strong>Your ${activeScope === 'global' ? 'Global' : escapeHtml(activeMode.replaceAll('_', ' '))} Rating &nbsp;${myRatingObj.is_provisional ? '<span class="badge-status badge-provisional">PROVISIONAL</span>' : '<span class="badge-status badge-established">ESTABLISHED</span>'}</strong><span>${myRatingObj.rated_match_count} rated matches · ${myRatingObj.wins} Wins · ${myRatingObj.draws} Draws · ${myRatingObj.losses} Losses</span></div>${state.myRatings.recent_changes?.length ? `<div class="recent-changes-pills" title="Recent rating movements">${state.myRatings.recent_changes.slice(0, 5).map(c => `<span class="delta-pill ${c.rating_delta > 0 ? 'delta-pos' : c.rating_delta < 0 ? 'delta-neg' : 'delta-zero'}">${c.rating_delta > 0 ? '+' : ''}${c.rating_delta}</span>`).join('')}</div>` : ''}</div>`;
+      } else {
+        userBanner = `<div class="user-rating-banner"><div class="user-rating-value">—</div><div class="user-rating-meta"><strong>Your ${activeScope === 'global' ? 'Global' : escapeHtml(activeMode.replaceAll('_', ' '))} Rating</strong><span>No rated matches in this category yet. Complete an eligible competitive match to establish your ranking.</span></div></div>`;
+      }
+    }
+
+    const data = state.rankingsData || { total: 0, established_total: 0, provisional_total: 0, rankings: [], has_more: false };
+    const rankings = data.rankings || [];
+    const establishedRows = rankings.filter(r => !r.is_provisional);
+    const provisionalRows = rankings.filter(r => r.is_provisional);
+
+    function renderTable(rows) {
+      if (!rows.length) return '';
+      return `<table class="rankings-table" aria-label="Competitive rankings table"><thead><tr><th scope="col" class="rank-col">Rank</th><th scope="col">Player</th><th scope="col" class="rating-col">Rating</th><th scope="col">Record (W-D-L)</th><th scope="col">Matches</th><th scope="col">Status</th></tr></thead><tbody>${rows.map(entry => {
+        const isSelf = state.profile && entry.player_id === state.profile.id;
+        return `<tr class="${isSelf ? 'self-row' : ''}"><td class="rank-col">#${entry.rank}</td><td><strong>${escapeHtml(entry.display_name)}</strong>${isSelf ? ' <small class="brand-light">(You)</small>' : ''}</td><td class="rating-col">${entry.rating}</td><td>${entry.wins}W - ${entry.draws}D - ${entry.losses}L</td><td>${entry.rated_match_count}</td><td>${entry.is_provisional ? '<span class="badge-status badge-provisional">PROVISIONAL</span>' : '<span class="badge-status badge-established">ESTABLISHED</span>'}</td></tr>`;
+      }).join('')}</tbody></table>`;
+    }
+
+    let tablesHtml = '';
+    if (rankings.length === 0) {
+      tablesHtml = '<p class="profile-empty">No ranked players in this category yet. Join or host an eligible multiplayer match while signed in to claim the top spot!</p>';
+    } else {
+      if (establishedRows.length > 0) {
+        tablesHtml += `<h2 class="section-subtitle">Established Leaderboard (${data.established_total})</h2>${renderTable(establishedRows)}`;
+      }
+      if (provisionalRows.length > 0) {
+        tablesHtml += `<h2 class="section-subtitle">Provisional Placement (&lt; 10 matches) (${data.provisional_total})</h2><p class="microcopy">Provisional players are actively completing placement matches to calibrate their competitive rating.</p>${renderTable(provisionalRows)}`;
+      }
+    }
+
+    const totalPages = Math.max(1, Math.ceil(data.total / 20));
+    const currentPage = state.rankingsPage + 1;
+    const paginationHtml = data.total > 20 ? `<div class="rankings-pagination"><button class="btn btn-secondary" type="button" data-action="rankings-prev" ${state.rankingsPage === 0 ? 'disabled' : ''}>Previous</button><span class="microcopy">Page ${currentPage} of ${totalPages} (${data.total} total)</span><button class="btn btn-secondary" type="button" data-action="rankings-next" ${!data.has_more ? 'disabled' : ''}>Next</button></div>` : '';
+
+    app.innerHTML = `<section class="rankings-card"><div class="section-kicker">COMPETITIVE RANKINGS</div><h1>Arena Leaderboard</h1><p class="subcopy">Authoritative persistent Elo rankings calculated from verified multiplayer matches.</p>${state.rankingsError ? `<p class="library-message" role="alert">${escapeHtml(state.rankingsError)} <button class="btn btn-quiet" type="button" data-action="rankings-retry">Retry</button></p>` : ''}<div class="rankings-scopes">${scopesNav}</div>${state.rankingsLoading && state.rankingsData ? '<p class="profile-empty" role="status">Updating rankings…</p>' : ''}${userBanner}${tablesHtml}${paginationHtml}<p class="microcopy" style="margin-top:2rem">Elo calculations are zero-sum across each multiplayer match. Ratings require complete individual matches with at least two authenticated player identities. Team Battle, Solo Practice, Escape Room, and casual matches are excluded from individual rated leaderboards.</p></section>`;
+  }
+  async function refreshRankings() {
+    const requestId = ++state.rankingsRequestId;
+    state.rankingsLoading = true;
+    state.rankingsError = '';
+    render();
+    try {
+      const scopeParam = state.rankingsScope;
+      const url = scopeParam === 'mode'
+        ? `/api/rankings?scope=mode&mode=${encodeURIComponent(state.rankingsMode)}&limit=20&offset=${state.rankingsPage * 20}`
+        : `/api/rankings?scope=global&limit=20&offset=${state.rankingsPage * 20}`;
+      const fetches = [fetch(url, { cache: 'no-store' })];
+      if (state.profileCredential) {
+        fetches.push(playerApi('/api/player-profiles/me/ratings'));
+      }
+      const [rankingsRes, myRatingsRes] = await Promise.all(fetches);
+      if (requestId !== state.rankingsRequestId) return;
+      if (!rankingsRes.ok) {
+        throw new Error('Rankings are temporarily unavailable. Try again shortly.');
+      }
+      state.rankingsData = await rankingsRes.json();
+      if (myRatingsRes && myRatingsRes.response.ok) {
+        state.myRatings = myRatingsRes.data;
+      }
+    } catch (err) {
+      if (requestId === state.rankingsRequestId) state.rankingsError = err.message || 'Could not load rankings.';
+    } finally {
+      if (requestId === state.rankingsRequestId) {
+        state.rankingsLoading = false;
+        render();
+      }
+    }
   }
   async function playerApi(path, options = {}) {
     const headers = new Headers(options.headers || {});
@@ -579,19 +718,43 @@
     if (!state.profileCredential) { state.profile = null; render(); return; }
     state.profileLoading = true; state.profileNotice = ''; render();
     try {
-      const [profileResult, statsResult, matchesResult] = await Promise.all([
+      const [profileResult, statsResult, matchesResult, ratingsResult] = await Promise.all([
         playerApi('/api/player-profiles/me'), playerApi('/api/player-profiles/me/competitive-stats'),
         playerApi(`/api/player-profiles/me/matches?limit=20&offset=${state.profilePage * 20}`),
+        playerApi('/api/player-profiles/me/ratings'),
       ]);
       if (profileResult.response.status === 401) throw new Error('Your credential was rejected. Sign in with a valid saved credential.');
       if (!profileResult.response.ok || !statsResult.response.ok || !matchesResult.response.ok) throw new Error('Player profile storage is temporarily unavailable. Try again.');
       state.profile = profileResult.data; state.profileStats = statsResult.data;
+      if (ratingsResult && ratingsResult.response.ok) {
+        state.myRatings = ratingsResult.data;
+      }
+      await refreshRatingHistory(false);
       state.profileMatches = state.profilePage ? [...state.profileMatches, ...(matchesResult.data.matches || [])] : (matchesResult.data.matches || []);
       state.profileHistoryTotal = matchesResult.data.total || 0;
     } catch (error) {
       if (error.message.startsWith('Your credential')) { sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY); state.profileCredential = ''; state.profile = null; }
       state.profileNotice = error.message || 'Could not load this profile.';
     } finally { state.profileLoading = false; render(); }
+  }
+  async function refreshRatingHistory(renderBeforeFetch = true) {
+    if (!state.profileCredential) return;
+    state.ratingHistoryLoading = true;
+    state.ratingHistoryError = '';
+    if (renderBeforeFetch) render();
+    const params = new URLSearchParams({ limit: '20', offset: String(state.ratingHistoryPage * 20) });
+    if (state.ratingHistoryScope) params.set('scope', state.ratingHistoryScope);
+    try {
+      const { response, data } = await playerApi(`/api/player-profiles/me/ratings/history?${params}`);
+      if (!response.ok) throw new Error(data?.error?.message || 'Rating history is temporarily unavailable.');
+      state.ratingHistory = data.history || [];
+      state.ratingHistoryTotal = data.total || 0;
+    } catch (error) {
+      state.ratingHistoryError = error.message || 'Could not load rating history.';
+    } finally {
+      state.ratingHistoryLoading = false;
+      if (renderBeforeFetch) render();
+    }
   }
   async function getLiveIdentityTicket() {
     if (!state.profileCredential) return null;
@@ -604,6 +767,10 @@
   }
   function render() {
     if (state.tick) clearInterval(state.tick);
+    if (state.view === 'rankings') {
+      rankingsScreen();
+      return;
+    }
     if (state.view === 'profile') {
       profileScreen();
       return;
@@ -688,6 +855,7 @@
         const { response, data } = await playerApi('/api/player-profiles', { method: 'POST', body: JSON.stringify({ display_name: displayName }) });
         if (!response.ok) throw new Error(data?.error?.message || 'Could not create a player profile.');
         state.profileCredential = data.credential; state.oneTimeCredential = data.credential;
+        state.ratingHistoryPage = 0; state.ratingHistoryScope = ''; state.ratingHistory = [];
         sessionStorage.setItem(PLAYER_CREDENTIAL_KEY, data.credential);
         await refreshProfile();
       } catch (error) { state.profileLoading = false; state.profileNotice = error.message || 'Could not create a player profile.'; render(); }
@@ -695,6 +863,7 @@
       const credential = document.querySelector('#profile-credential')?.value.trim() || '';
       if (!credential) { notify('Paste your saved player credential to sign in.'); return; }
       state.profileCredential = credential; state.oneTimeCredential = '';
+      state.ratingHistoryPage = 0; state.ratingHistoryScope = ''; state.ratingHistory = [];
       sessionStorage.setItem(PLAYER_CREDENTIAL_KEY, credential);
       await refreshProfile();
     } else if (action === 'profile-update') {
@@ -723,6 +892,7 @@
     } else if (action === 'profile-logout') {
       sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
       state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
+      state.myRatings = null; state.ratingHistory = []; state.ratingHistoryTotal = 0; state.ratingHistoryPage = 0;
       state.oneTimeCredential = ''; state.profileNotice = 'Signed out on this tab.'; render();
     } else if (action === 'profile-delete') {
       if (!window.confirm('Delete this pseudonymous profile? Credentials will be revoked and retained match records anonymized. This cannot be undone.')) return;
@@ -730,9 +900,16 @@
       if (!response.ok) { state.profileNotice = data?.error?.message || 'Could not delete this profile.'; render(); return; }
       sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
       state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
+      state.myRatings = null; state.ratingHistory = []; state.ratingHistoryTotal = 0; state.ratingHistoryPage = 0;
       state.oneTimeCredential = ''; state.profileNotice = 'Profile deleted and identifying profile data anonymized.'; render();
     } else if (action === 'profile-more') {
       state.profilePage += 1; await refreshProfile();
+    } else if (action === 'rating-history-prev') {
+      if (state.ratingHistoryPage > 0) { state.ratingHistoryPage -= 1; await refreshRatingHistory(); }
+    } else if (action === 'rating-history-next') {
+      if ((state.ratingHistoryPage + 1) * 20 < state.ratingHistoryTotal) { state.ratingHistoryPage += 1; await refreshRatingHistory(); }
+    } else if (action === 'rating-history-retry') {
+      await refreshRatingHistory();
     } else if (action === 'quiz-library') {
       state.view = 'library';
       state.screen = '';
@@ -804,10 +981,44 @@
     }
     else if (action === 'lobby') send('lobby');
     else if (action === 'leave') leave();
+    else if (action === 'rankings-scope') {
+      const scope = target.dataset.scope;
+      if (scope === 'global') {
+        state.rankingsScope = 'global';
+      } else {
+        state.rankingsScope = 'mode';
+        state.rankingsMode = scope;
+      }
+      state.rankingsPage = 0;
+      state.rankingsData = null;
+      void refreshRankings();
+    }
+    else if (action === 'rankings-prev') {
+      if (state.rankingsPage > 0) {
+        state.rankingsPage--;
+        void refreshRankings();
+      }
+    }
+    else if (action === 'rankings-next') {
+      if (state.rankingsData?.has_more) {
+        state.rankingsPage++;
+        void refreshRankings();
+      }
+    }
+    else if (action === 'rankings-retry') {
+      void refreshRankings();
+    }
   });
   app.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.target.id === 'room-code') document.querySelector('[data-action="confirm-join"]')?.click();
     if (event.key === 'Enter' && event.target.id === 'player-name') document.querySelector('[data-action="create"]')?.click();
+  });
+  app.addEventListener('change', event => {
+    if (event.target.id === 'rating-history-scope') {
+      state.ratingHistoryScope = event.target.value;
+      state.ratingHistoryPage = 0;
+      void refreshRatingHistory();
+    }
   });
   function setActiveNavigation() {
     document.querySelectorAll('[data-view]').forEach(button => {
@@ -824,6 +1035,7 @@
     state.screen = '';
     setActiveNavigation();
     if (state.view === 'profile') void refreshProfile();
+    else if (state.view === 'rankings') void refreshRankings();
     else render();
   });
   setActiveNavigation();

@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -21,40 +23,65 @@ EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 def main() -> None:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-    origin = f"http://127.0.0.1:{port}"
-    process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "quizverse.app:app", "--host", "127.0.0.1", "--port", str(port)],
-        cwd=PROJECT_ROOT,
-        env={**os.environ, "ALLOWED_ORIGINS": origin},
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError(f"Uvicorn exited with code {process.returncode}")
-            try:
-                import urllib.request
-
-                with urllib.request.urlopen(f"{origin}/health", timeout=0.3) as response:
-                    if response.status == 200:
-                        break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            raise RuntimeError("The FastAPI server did not start.")
-        run_browser_sessions(origin)
-    finally:
-        process.terminate()
+    with tempfile.TemporaryDirectory(prefix="quizverse-nine-mode-") as temporary:
+        database_path = Path(temporary) / "nine-mode.sqlite3"
+        database_url = f"sqlite:///{database_path.as_posix()}"
+        environment = {**os.environ, "DATABASE_URL": database_url}
+        migration = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=PROJECT_ROOT, env=environment, capture_output=True, text=True, check=False,
+        )
+        if migration.returncode:
+            raise RuntimeError(f"Nine-mode browser database migration failed: {migration.stderr[-2000:]}")
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        origin = f"http://127.0.0.1:{port}"
+        environment["ALLOWED_ORIGINS"] = origin
+        server_runner = (
+            "import signal; from uvicorn import Config, Server; "
+            f"server = Server(Config('quizverse.app:app', host='127.0.0.1', port={port})); "
+            "signal.signal(signal.SIGBREAK, lambda *_: setattr(server, 'should_exit', True)); "
+            "server.run()"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", server_runner],
+            cwd=PROJECT_ROOT,
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
         try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    raise RuntimeError(f"Uvicorn exited with code {process.returncode}")
+                try:
+                    import urllib.request
+
+                    with urllib.request.urlopen(f"{origin}/health", timeout=0.3) as response:
+                        if response.status == 200:
+                            break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                raise RuntimeError("The FastAPI server did not start.")
+            run_browser_sessions(origin)
+        finally:
+            if process.poll() is None:
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            for _attempt in range(60):
+                try:
+                    database_path.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
 
 
 def run_browser_sessions(origin: str) -> None:

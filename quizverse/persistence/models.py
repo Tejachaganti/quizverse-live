@@ -9,7 +9,9 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    false as sql_false,
     ForeignKey,
+    Float,
     JSON,
     Integer,
     String,
@@ -349,6 +351,8 @@ class PlayerProfile(Base):
 
     credentials: Mapped[list["PlayerCredential"]] = relationship(back_populates="player", cascade="all, delete-orphan")
     matches: Mapped[list["MatchParticipant"]] = relationship(back_populates="player")
+    ratings: Mapped[list["PlayerRating"]] = relationship(back_populates="player", cascade="all, delete-orphan")
+    rating_history: Mapped[list["RatingHistory"]] = relationship(back_populates="player", cascade="all, delete-orphan")
 
 
 class PlayerCredential(Base):
@@ -393,10 +397,14 @@ class CompetitiveMatch(Base):
     question_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     result_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     result_context: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    is_rated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sql_false())
+    rating_ineligible_reason: Mapped[str | None] = mapped_column(String(64))
+    rated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     participants: Mapped[list["MatchParticipant"]] = relationship(back_populates="match", cascade="all, delete-orphan", order_by="MatchParticipant.seat_index")
     teams: Mapped[list["MatchTeam"]] = relationship(back_populates="match", cascade="all, delete-orphan", order_by="MatchTeam.team_id")
+    rating_history: Mapped[list["RatingHistory"]] = relationship(back_populates="match")
 
 
 class MatchParticipant(Base):
@@ -455,3 +463,58 @@ class MatchTeam(Base):
     outcome: Mapped[str] = mapped_column(String(8), nullable=False)
 
     match: Mapped[CompetitiveMatch] = relationship(back_populates="teams")
+
+
+class PlayerRating(Base):
+    """Current competitive rating and record for an active player profile in a given scope."""
+
+    __tablename__ = "player_ratings"
+    __table_args__ = (
+        UniqueConstraint("player_id", "rating_scope", name="uq_player_rating_scope"),
+        CheckConstraint("rating_scope = 'global' OR rating_scope LIKE 'mode:%'", name="ck_rating_scope_format"),
+        CheckConstraint("rated_match_count >= 0", name="ck_player_rating_match_count"),
+        CheckConstraint("wins >= 0 AND losses >= 0 AND draws >= 0", name="ck_player_rating_record"),
+        CheckConstraint("rating >= 0", name="ck_player_rating_non_negative"),
+        Index("ix_player_ratings_scope_rating", "rating_scope", "rating"),
+        Index("ix_player_ratings_player_scope", "player_id", "rating_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    rating_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False, default=1000, server_default="1000")
+    rated_match_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    algorithm_version: Mapped[str] = mapped_column(String(32), nullable=False, default="elo_v1", server_default="elo_v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    player: Mapped["PlayerProfile"] = relationship(back_populates="ratings")
+
+
+class RatingHistory(Base):
+    """Immutable audit record of a discrete rating adjustment resulting from an eligible match."""
+
+    __tablename__ = "rating_history"
+    __table_args__ = (
+        UniqueConstraint("player_id", "rating_scope", "match_id", name="uq_rating_history_player_scope_match"),
+        Index("ix_rating_history_player_scope_created", "player_id", "rating_scope", "created_at"),
+        Index("ix_rating_history_match_scope", "match_id", "rating_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    rating_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    match_id: Mapped[str] = mapped_column(String(32), ForeignKey("competitive_matches.id", ondelete="RESTRICT"), nullable=False)
+    prior_rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    rating_delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    actual_score: Mapped[float] = mapped_column(Float, nullable=False)
+    expected_score: Mapped[float] = mapped_column(Float, nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    player: Mapped["PlayerProfile"] = relationship(back_populates="rating_history")
+    match: Mapped["CompetitiveMatch"] = relationship(back_populates="rating_history")
