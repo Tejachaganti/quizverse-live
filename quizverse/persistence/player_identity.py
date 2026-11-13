@@ -246,13 +246,27 @@ class ProcessRateLimiter:
 class MatchHistoryService:
     """Persists engine-built terminal payloads and offers profile-scoped history."""
 
-    def __init__(self, database: Database, rating_service: RatingService | None = None) -> None:
+    def __init__(
+        self,
+        database: Database,
+        rating_service: RatingService | None = None,
+        tournament_service: Any | None = None,
+    ) -> None:
         self._database = database
         self._rating_service = rating_service or RatingService(database)
+        self._tournament_service = tournament_service
 
     @property
     def rating_service(self) -> RatingService:
         return self._rating_service
+
+    @property
+    def tournament_service(self) -> Any | None:
+        return self._tournament_service
+
+    @tournament_service.setter
+    def tournament_service(self, service: Any | None) -> None:
+        self._tournament_service = service
 
     @staticmethod
     def digest_result(result: dict[str, object]) -> str:
@@ -327,6 +341,18 @@ class MatchHistoryService:
             else:
                 match.is_rated = False
                 match.rating_ineligible_reason = reason
+
+            # Process tournament bracket advancement if this match was a tournament fixture
+            if self._tournament_service is not None:
+                context_data = clean.get("result_context") or {}
+                t_match_id = context_data.get("tournament_match_id")
+                if t_match_id:
+                    self._tournament_service.process_match_completion(
+                        session=session,
+                        tournament_match_id=str(t_match_id),
+                        official_match_id=match_id,
+                        result_payload=clean,
+                    )
 
             return True
 

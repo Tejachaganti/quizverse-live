@@ -48,6 +48,8 @@ from quizverse.quiz_api import install_quiz_api
 from quizverse.taxonomy_api import install_taxonomy_api
 from quizverse.exam_collection_api import install_exam_collection_api
 from quizverse.player_api import install_player_api
+from quizverse.persistence.tournaments import TournamentService
+from quizverse.tournament_api import install_tournament_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -235,7 +237,8 @@ def create_app(
     active_engine.set_question_provider(load_game_questions)
     player_identities = PlayerIdentityService(persistence)
     player_tickets = LiveIdentityTickets()
-    match_history = MatchHistoryService(persistence)
+    tournament_service = TournamentService(persistence, engine=active_engine)
+    match_history = MatchHistoryService(persistence, tournament_service=tournament_service)
     hub = ConnectionHub(active_engine, identities=player_identities, tickets=player_tickets, match_history=match_history)
 
     @asynccontextmanager
@@ -264,11 +267,13 @@ def create_app(
     app.state.hub = hub
     app.state.database = persistence
     app.state.rating_service = match_history.rating_service
+    app.state.tournament_service = tournament_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
     install_taxonomy_api(app, persistence)
     install_exam_collection_api(app, persistence)
+    install_tournament_api(app, tournament_service, player_identities, active_engine)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:

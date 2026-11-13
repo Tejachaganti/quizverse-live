@@ -1669,6 +1669,10 @@ class GameEngine:
             "question_count": room.match_config.question_count,
             "exam_collection_id": room.selection.get("exam_collection_id"),
         }
+        if "tournament_id" in room.selection:
+            result_context["tournament_id"] = room.selection["tournament_id"]
+        if "tournament_match_id" in room.selection:
+            result_context["tournament_match_id"] = room.selection["tournament_match_id"]
         return {
             "source": "game_engine", "engine_match_id": room.engine_match_id, "mode": room.match_config.mode.value,
             "status": "completed", "result_kind": result_kind, "rules_version": "stage-7-v1",

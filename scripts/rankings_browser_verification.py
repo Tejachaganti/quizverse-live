@@ -22,7 +22,7 @@ EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="quizverse-rankings-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="quizverse-rankings-", dir=PROJECT_ROOT / "tmp") as temporary:
         database_path = Path(temporary) / "rankings.sqlite3"
         database_url = f"sqlite:///{database_path.as_posix()}"
         environment = {**os.environ, "DATABASE_URL": database_url}

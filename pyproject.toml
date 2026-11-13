@@ -29,6 +29,7 @@ quizverse-seed-exam-collections = "quizverse.persistence.exam_seeding:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider --basetemp=tmp"
 
 [tool.setuptools.packages.find]
 include = ["quizverse*"]

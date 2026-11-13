@@ -19,7 +19,8 @@ EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="quizverse-ui-") as temporary_directory:
+    (PROJECT_ROOT / "tmp").mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="quizverse-ui-", dir=PROJECT_ROOT / "tmp") as temporary_directory:
         database_path = Path(temporary_directory) / "quizverse-ui.sqlite3"
         database_url = f"sqlite:///{database_path.as_posix()}"
         environment = {**os.environ, "DATABASE_URL": database_url}

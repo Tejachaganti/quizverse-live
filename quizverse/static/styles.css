@@ -62,3 +62,51 @@
   .rankings-scopes{overflow-x:auto;padding-bottom:.4rem}
 }
 @media(max-width:520px){.rating-history-row{grid-template-columns:1fr}.rating-history-row>div:last-child{text-align:left}}
+
+/* Stage 8.3 — Single-Elimination Tournaments */
+.tournaments-card{width:min(1100px,100%);margin:1rem auto;padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(170,161,255,.24);border-radius:20px;background:linear-gradient(145deg,rgba(28,27,53,.96),rgba(16,18,34,.98));box-shadow:var(--shadow)}
+.tournaments-card h1{margin:.35rem 0 .6rem;font:700 clamp(2rem,5vw,2.8rem)/1.1 'Space Grotesk',sans-serif;letter-spacing:-1px}
+.tournaments-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem}
+.tournaments-filter-bar{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin:1rem 0 1.5rem}
+.tournaments-filter-bar .field{max-width:200px;font-size:.85rem;padding:.4rem .6rem}
+.tournaments-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1rem;margin-top:1rem}
+.tournament-card{display:flex;flex-direction:column;justify-content:space-between;gap:.9rem;padding:1.2rem;border:1px solid #383a55;border-radius:14px;background:#181a2e;transition:border-color .15s}
+.tournament-card:hover{border-color:#7f72db}
+.tournament-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:.6rem}
+.tournament-card-title{font:700 1.15rem 'Space Grotesk',sans-serif;color:#fff;margin:0}
+.badge-tourn{display:inline-block;padding:.2rem .55rem;border-radius:8px;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.badge-draft{background:rgba(160,160,180,.15);border:1px solid rgba(160,160,180,.4);color:#b5b5cc}
+.badge-open{background:rgba(83,198,159,.2);border:1px solid rgba(83,198,159,.5);color:#a5f1d0}
+.badge-in-progress{background:rgba(127,114,219,.25);border:1px solid rgba(159,138,255,.5);color:#d2cffa}
+.badge-completed{background:rgba(215,170,94,.2);border:1px solid rgba(215,170,94,.5);color:#ffe2a0}
+.badge-cancelled{background:rgba(255,107,139,.2);border:1px solid rgba(255,107,139,.45);color:#ff9ab0}
+.tournament-card-meta{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.82rem;color:#b5b5cc}
+.tournament-card-meta span strong{color:#e8e8f8;font-weight:600}
+.tournament-card-actions{display:flex;gap:.5rem;margin-top:.4rem;flex-wrap:wrap}
+.bracket-scroll-container{overflow-x:auto;padding:1.5rem 0.5rem;margin:1.5rem 0;background:rgba(15,16,28,.6);border:1px solid #282a44;border-radius:16px}
+.bracket-rounds-track{display:flex;gap:2rem;align-items:stretch;min-width:max-content}
+.bracket-round-column{display:flex;flex-direction:column;width:260px;gap:1.5rem}
+.bracket-round-header{text-align:center;font:700 .9rem 'Space Grotesk',sans-serif;color:#9f8aff;text-transform:uppercase;letter-spacing:.7px;padding-bottom:.5rem;border-bottom:1px solid #323552}
+.bracket-round-matches{display:flex;flex-direction:column;justify-content:space-around;flex-grow:1;gap:1.2rem}
+.bracket-match-node{display:flex;flex-direction:column;border:1px solid #363957;border-radius:12px;background:#1a1c32;box-shadow:0 4px 12px rgba(0,0,0,.25);overflow:hidden}
+.bracket-match-node.match-in-progress{border-color:#9f8aff;box-shadow:0 0 10px rgba(159,138,255,.25)}
+.bracket-match-node.match-completed{border-color:#484b6c}
+.match-header-bar{display:flex;justify-content:space-between;align-items:center;padding:.35rem .65rem;background:#141526;font-size:.72rem;color:#8587a8;border-bottom:1px solid #282a44}
+.match-slot{display:flex;align-items:center;justify-content:space-between;padding:.55rem .75rem;font-size:.86rem;color:#d5d5ea;border-bottom:1px solid #23253d}
+.match-slot:last-of-type{border-bottom:none}
+.match-slot.winner{background:rgba(83,198,159,.12);color:#a5f1d0;font-weight:700}
+.match-slot-name{display:flex;align-items:center;gap:.5rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seed-chip{display:inline-block;padding:.1rem .35rem;border-radius:4px;background:#2d304a;color:#a5a6c0;font-size:.7rem;font-weight:700}
+.match-footer-action{padding:.5rem;background:#141526;text-align:center;border-top:1px solid #282a44}
+.tournament-detail-banner{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center;padding:1.2rem;border:1px solid rgba(159,138,255,.3);border-radius:14px;background:linear-gradient(135deg,rgba(35,32,65,.6),rgba(20,22,44,.7));margin-bottom:1.5rem}
+.tournament-detail-meta{display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.85rem;color:#b5b5cc;margin-top:.4rem}
+.tournament-detail-actions{display:flex;gap:.5rem;flex-wrap:wrap}
+.create-modal-card{max-width:540px;margin:1rem auto;padding:1.5rem;border:1px solid #484b6c;border-radius:16px;background:#191b30}
+.create-modal-card h2{margin:0 0 1rem;font:700 1.4rem 'Space Grotesk',sans-serif}
+.audit-list{display:grid;gap:.5rem;margin-top:1rem;max-height:300px;overflow-y:auto}
+.audit-row{display:grid;grid-template-columns:auto 1fr auto;gap:.75rem;padding:.5rem .75rem;background:#17182b;border:1px solid #282942;border-radius:8px;font-size:.8rem;color:#b5b5cc;align-items:center}
+.audit-action{font-weight:700;color:#d2cffa}
+@media(max-width:680px){
+  .tournament-detail-banner{grid-template-columns:1fr}
+  .tournaments-header{flex-direction:column;align-items:flex-start}
+}

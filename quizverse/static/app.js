@@ -62,6 +62,18 @@
     ratingHistoryScope: '',
     ratingHistoryLoading: false,
     ratingHistoryError: '',
+    tournamentsList: [],
+    tournamentsTotal: 0,
+    tournamentsLoading: false,
+    tournamentsError: '',
+    tournamentsFilterStatus: '',
+    tournamentsFilterMode: '',
+    selectedTournamentId: null,
+    selectedTournamentDetail: null,
+    selectedTournamentBracket: null,
+    selectedTournamentAudit: [],
+    tournamentLoadingDetail: false,
+    showTournamentCreateModal: false,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -614,6 +626,369 @@
     { id: 'power_play', name: 'Power Play' },
     { id: 'bluff_master', name: 'Bluff Master' },
   ];
+  const TOURNAMENT_SUPPORTED_MODES = [
+    { id: 'classic', name: 'Classic' },
+    { id: 'speed_challenge', name: 'Speed Challenge' },
+    { id: 'elimination', name: 'Elimination' },
+    { id: 'power_play', name: 'Power Play' },
+  ];
+
+  async function refreshTournaments() {
+    state.tournamentsLoading = true;
+    state.tournamentsError = '';
+    render();
+    try {
+      let url = '/api/tournaments?limit=50';
+      if (state.tournamentsFilterStatus) url += `&status=${encodeURIComponent(state.tournamentsFilterStatus)}`;
+      if (state.tournamentsFilterMode) url += `&mode=${encodeURIComponent(state.tournamentsFilterMode)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Tournaments are temporarily unavailable.');
+      const data = await res.json();
+      state.tournamentsList = data.tournaments || [];
+      state.tournamentsTotal = data.total || 0;
+
+      if (state.selectedTournamentId) {
+        await refreshTournamentDetail(state.selectedTournamentId);
+      }
+    } catch (err) {
+      state.tournamentsError = err.message || 'Could not load tournaments.';
+    } finally {
+      state.tournamentsLoading = false;
+      render();
+    }
+  }
+
+  async function refreshTournamentDetail(tournamentId) {
+    state.tournamentLoadingDetail = true;
+    try {
+      const [detailRes, bracketRes, auditRes] = await Promise.all([
+        fetch(`/api/tournaments/${tournamentId}`, { cache: 'no-store' }),
+        fetch(`/api/tournaments/${tournamentId}/bracket`, { cache: 'no-store' }),
+        fetch(`/api/tournaments/${tournamentId}/audit`, { cache: 'no-store' }),
+      ]);
+      if (detailRes.ok) state.selectedTournamentDetail = await detailRes.json();
+      if (bracketRes.ok) state.selectedTournamentBracket = await bracketRes.json();
+      if (auditRes.ok) state.selectedTournamentAudit = await auditRes.json();
+    } catch (err) {
+      notify(err.message || 'Could not load tournament details.');
+    } finally {
+      state.tournamentLoadingDetail = false;
+    }
+  }
+
+  function tournamentsScreen() {
+    app.classList.remove('library-shell');
+    if (state.selectedTournamentId) {
+      tournamentDetailScreen();
+      return;
+    }
+    tournamentListScreen();
+  }
+
+  function tournamentBadge(status) {
+    const labels = {
+      draft: 'Draft',
+      registration_open: 'Open Registration',
+      registration_closed: 'Registration Closed',
+      scheduled: 'Scheduled',
+      in_progress: 'In Progress',
+      completed: 'Completed',
+      cancelled: 'Cancelled',
+    };
+    const cssClass = {
+      draft: 'badge-draft',
+      registration_open: 'badge-open',
+      registration_closed: 'badge-draft',
+      scheduled: 'badge-in-progress',
+      in_progress: 'badge-in-progress',
+      completed: 'badge-completed',
+      cancelled: 'badge-cancelled',
+    }[status] || 'badge-draft';
+    return `<span class="badge-tourn ${cssClass}">${escapeHtml(labels[status] || status)}</span>`;
+  }
+
+  function tournamentListScreen() {
+    let content = '';
+    if (state.tournamentsLoading && !state.tournamentsList.length) {
+      content = '<div class="loading-state"><span class="loader"></span><p>Loading tournaments…</p></div>';
+    } else if (state.tournamentsError) {
+      content = `<p class="library-message" role="alert">${escapeHtml(state.tournamentsError)}</p><button class="btn btn-secondary" type="button" data-action="tournaments-retry">Retry</button>`;
+    } else if (!state.tournamentsList.length) {
+      content = '<p class="profile-empty">No tournaments found matching the filters. Create the first tournament!</p>';
+    } else {
+      const cards = state.tournamentsList.map(t => {
+        const canRegister = t.status === 'registration_open' && state.profileCredential;
+        return `
+          <article class="tournament-card">
+            <div>
+              <div class="tournament-card-top">
+                <h3 class="tournament-card-title">${escapeHtml(t.name)}</h3>
+                ${tournamentBadge(t.status)}
+              </div>
+              ${t.description ? `<p class="subcopy" style="margin:.4rem 0 .6rem;font-size:.85rem;">${escapeHtml(t.description)}</p>` : ''}
+              <div class="tournament-card-meta">
+                <span>Mode: <strong>${escapeHtml(t.mode.replaceAll('_', ' '))}</strong></span>
+                <span>Format: <strong>Single Elim</strong></span>
+                <span>Capacity: <strong>${t.registered_count} / ${t.capacity}</strong></span>
+                <span>Host: <strong>${escapeHtml(t.owner_display_name)}</strong></span>
+              </div>
+            </div>
+            <div class="tournament-card-actions">
+              <button class="btn btn-secondary" type="button" data-action="view-tournament" data-id="${t.id}">View Bracket</button>
+              ${canRegister ? `<button class="btn btn-primary" type="button" data-action="register-tournament" data-id="${t.id}">Register</button>` : ''}
+            </div>
+          </article>
+        `;
+      }).join('');
+      content = `<div class="tournaments-grid">${cards}</div>`;
+    }
+
+    const modal = state.showTournamentCreateModal ? `
+      <div class="create-modal-card">
+        <h2>Create Tournament</h2>
+        <form class="profile-form">
+          <label class="form-label" for="tourn-name">Tournament Name</label>
+          <input class="field" id="tourn-name" maxlength="80" required placeholder="e.g. Saturday Speed Knockout">
+          <label class="form-label" for="tourn-mode">Game Mode</label>
+          <select class="field" id="tourn-mode">
+            ${TOURNAMENT_SUPPORTED_MODES.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+          </select>
+          <label class="form-label" for="tourn-capacity">Player Capacity</label>
+          <select class="field" id="tourn-capacity">
+            <option value="4">4 Players (2 Rounds)</option>
+            <option value="8" selected>8 Players (3 Rounds)</option>
+            <option value="16">16 Players (4 Rounds)</option>
+            <option value="32">32 Players (5 Rounds)</option>
+          </select>
+          <label class="form-label" for="tourn-desc">Description (Optional)</label>
+          <textarea class="field" id="tourn-desc" maxlength="500" rows="3" placeholder="Tournament rules or notes"></textarea>
+          <div style="display:flex;gap:.75rem;margin-top:1rem;">
+            <button class="btn btn-primary" type="button" data-action="tournament-submit-create">Create Tournament</button>
+            <button class="btn btn-quiet" type="button" data-action="close-tournament-create">Cancel</button>
+          </div>
+        </form>
+      </div>
+    ` : '';
+
+    app.innerHTML = `
+      <section class="tournaments-card">
+        <div class="section-kicker">STAGE 8.3 · COMPETITIVE ARENA</div>
+        <div class="tournaments-header">
+          <div>
+            <h1>Tournament Arena</h1>
+            <p class="subcopy">Two-player single-elimination knockout tournaments with deterministic seeding and Elo ratings.</p>
+          </div>
+          <div>
+            ${state.profileCredential
+              ? `<button class="btn btn-primary" type="button" data-action="open-tournament-create">Create Tournament</button>`
+              : `<button class="btn btn-secondary" type="button" data-action="go-to-profile">Sign in to Compete</button>`}
+          </div>
+        </div>
+        ${modal}
+        <div class="tournaments-filter-bar">
+          <label for="filter-status" style="font-size:.8rem;color:#a5a6c0;">Status:</label>
+          <select class="field" id="filter-status">
+            <option value="" ${state.tournamentsFilterStatus === '' ? 'selected' : ''}>All Statuses</option>
+            <option value="registration_open" ${state.tournamentsFilterStatus === 'registration_open' ? 'selected' : ''}>Open Registration</option>
+            <option value="in_progress" ${state.tournamentsFilterStatus === 'in_progress' ? 'selected' : ''}>In Progress</option>
+            <option value="completed" ${state.tournamentsFilterStatus === 'completed' ? 'selected' : ''}>Completed</option>
+            <option value="draft" ${state.tournamentsFilterStatus === 'draft' ? 'selected' : ''}>Draft</option>
+          </select>
+          <label for="filter-mode" style="font-size:.8rem;color:#a5a6c0;">Mode:</label>
+          <select class="field" id="filter-mode">
+            <option value="" ${state.tournamentsFilterMode === '' ? 'selected' : ''}>All Modes</option>
+            ${TOURNAMENT_SUPPORTED_MODES.map(m => `<option value="${m.id}" ${state.tournamentsFilterMode === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+          </select>
+          <span style="font-size:.8rem;color:#8587a8;margin-left:auto;">${state.tournamentsTotal} Tournaments</span>
+        </div>
+        ${content}
+      </section>
+    `;
+  }
+
+  function tournamentDetailScreen() {
+    const t = state.selectedTournamentDetail;
+    const bracket = state.selectedTournamentBracket;
+    const audit = state.selectedTournamentAudit || [];
+
+    if (!t) {
+      app.innerHTML = '<section class="tournaments-card"><div class="loading-state"><span class="loader"></span><p>Loading tournament details…</p></div></section>';
+      return;
+    }
+
+    const myId = state.profile?.id;
+    const isOwner = myId && myId === t.owner_player_id;
+    const participants = bracket?.participants || [];
+    const isRegistered = myId && participants.some(p => p.player_id === myId && p.status !== 'withdrawn');
+
+    let ownerActions = '';
+    if (isOwner) {
+      if (t.status === 'draft') {
+        ownerActions += `<button class="btn btn-primary" type="button" data-action="open-tournament-reg" data-id="${t.id}">Open Registration</button>`;
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-tournament" data-id="${t.id}">Cancel</button>`;
+      } else if (t.status === 'registration_open') {
+        ownerActions += `<button class="btn btn-primary" type="button" data-action="start-tournament" data-id="${t.id}">Start Tournament</button>`;
+        ownerActions += `<button class="btn btn-secondary" type="button" data-action="close-tournament-reg" data-id="${t.id}">Close Registration</button>`;
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-tournament" data-id="${t.id}">Cancel</button>`;
+      } else if (t.status === 'registration_closed') {
+        ownerActions += `<button class="btn btn-primary" type="button" data-action="start-tournament" data-id="${t.id}">Start Tournament</button>`;
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-tournament" data-id="${t.id}">Cancel</button>`;
+      } else if (t.status === 'in_progress') {
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-tournament" data-id="${t.id}">Cancel</button>`;
+      }
+    }
+
+    let playerActions = '';
+    if (t.status === 'registration_open' && state.profileCredential) {
+      if (isRegistered) {
+        playerActions += `<button class="btn btn-danger" type="button" data-action="withdraw-tournament" data-id="${t.id}">Withdraw</button>`;
+      } else {
+        playerActions += `<button class="btn btn-primary" type="button" data-action="register-tournament" data-id="${t.id}">Register to Play</button>`;
+      }
+    }
+
+    // Bracket rounds HTML
+    let bracketHtml = '';
+    if (bracket?.rounds?.length) {
+      const roundsCols = bracket.rounds.map(r => {
+        const matchesHtml = r.matches.map(m => {
+          const isP1 = myId && m.player_one?.id === myId;
+          const isP2 = myId && m.player_two?.id === myId;
+          const amParticipant = isP1 || isP2;
+          const isP1Winner = m.winner && m.player_one && m.winner.id === m.player_one.id;
+          const isP2Winner = m.winner && m.player_two && m.winner.id === m.player_two.id;
+
+          let matchAction = '';
+          if (['scheduled', 'in_progress'].includes(m.status)) {
+            if (amParticipant) {
+              matchAction = `
+                <div class="match-footer-action">
+                  <button class="btn btn-primary" style="padding:.3rem .6rem;font-size:.78rem;" type="button" data-action="launch-tournament-match" data-tourn-id="${t.id}" data-match-id="${m.id}">Play Match</button>
+                  <button class="btn btn-quiet" style="padding:.3rem .5rem;font-size:.72rem;" type="button" data-action="forfeit-tournament-match" data-tourn-id="${t.id}" data-match-id="${m.id}">Forfeit</button>
+                  <button class="btn btn-quiet" style="padding:.3rem .5rem;font-size:.72rem;" type="button" data-action="dispute-tournament-match" data-tourn-id="${t.id}" data-match-id="${m.id}">Dispute</button>
+                </div>
+              `;
+            } else {
+              matchAction = `<div class="match-footer-action" style="font-size:.75rem;color:#a5a6c0;">${m.status === 'in_progress' ? 'Match In Progress' : 'Ready'}</div>`;
+            }
+          } else if (m.status === 'completed') {
+            matchAction = `<div class="match-footer-action" style="font-size:.75rem;color:#53c69f;">Completed · Winner: ${escapeHtml(m.winner?.display_name || 'Winner')}</div>`;
+          } else if (m.status === 'bye') {
+            matchAction = `<div class="match-footer-action" style="font-size:.75rem;color:#d2cffa;">Bye Advancement</div>`;
+          } else if (m.status === 'forfeited') {
+            matchAction = `<div class="match-footer-action" style="font-size:.75rem;color:#ff9ab0;">Forfeited (${escapeHtml(m.result_reason || '')})</div>`;
+          } else if (m.status === 'disputed') {
+            matchAction = `<div class="match-footer-action" style="font-size:.75rem;color:#ffe2a0;">Disputed (${escapeHtml(m.result_reason || '')})</div>`;
+          }
+
+          return `
+            <div class="bracket-match-node ${m.status === 'in_progress' ? 'match-in-progress' : m.status === 'completed' ? 'match-completed' : ''}">
+              <div class="match-header-bar">
+                <span>Match ${m.match_number}</span>
+                <span>${escapeHtml(m.status)}</span>
+              </div>
+              <div class="match-slot ${isP1Winner ? 'winner' : ''}">
+                <div class="match-slot-name">
+                  <span class="seed-chip">1</span>
+                  <span>${escapeHtml(m.player_one?.display_name || (m.status === 'pending' ? 'TBD' : 'None'))}</span>
+                </div>
+                ${isP1Winner ? '<span>🏆</span>' : ''}
+              </div>
+              <div class="match-slot ${isP2Winner ? 'winner' : ''}">
+                <div class="match-slot-name">
+                  <span class="seed-chip">2</span>
+                  <span>${escapeHtml(m.player_two?.display_name || (m.status === 'pending' ? 'TBD' : m.status === 'bye' ? 'BYE' : 'None'))}</span>
+                </div>
+                ${isP2Winner ? '<span>🏆</span>' : ''}
+              </div>
+              ${matchAction}
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="bracket-round-column">
+            <div class="bracket-round-header">Round ${r.round_number} (${escapeHtml(r.status)})</div>
+            <div class="bracket-round-matches">${matchesHtml}</div>
+          </div>
+        `;
+      }).join('');
+
+      bracketHtml = `
+        <h2>Knockout Bracket</h2>
+        <div class="bracket-scroll-container">
+          <div class="bracket-rounds-track">${roundsCols}</div>
+        </div>
+      `;
+    } else {
+      bracketHtml = `<p class="profile-empty" style="margin:2rem 0;">Bracket will be generated once registration closes and the tournament begins.</p>`;
+    }
+
+    // Participants list
+    const partsRows = participants.map(p => `
+      <tr class="${p.player_id === myId ? 'self-row' : ''}">
+        <td><strong>#${p.seed ?? '—'}</strong></td>
+        <td>${escapeHtml(p.display_name)}</td>
+        <td><span class="badge-status ${p.status === 'champion' ? 'badge-established' : p.status === 'runner_up' ? 'badge-provisional' : ''}">${escapeHtml(p.status)}</span></td>
+        <td>${p.final_placement ? `#${p.final_placement}` : '—'}</td>
+      </tr>
+    `).join('');
+
+    // Audit trail
+    const auditRows = audit.map(ev => `
+      <div class="audit-row">
+        <span>${new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <div><strong class="audit-action">${escapeHtml(ev.action)}</strong>: ${escapeHtml(ev.reason || '')}</div>
+        <span>${escapeHtml(ev.actor_player_id ? 'Player' : 'System')}</span>
+      </div>
+    `).join('');
+
+    app.innerHTML = `
+      <section class="tournaments-card">
+        <button class="btn btn-quiet" type="button" data-action="back-to-tournaments" style="margin-bottom:1rem;">← Back to All Tournaments</button>
+        <div class="tournament-detail-banner">
+          <div>
+            <div style="display:flex;align-items:center;gap:.75rem;">
+              <h1 style="margin:0;">${escapeHtml(t.name)}</h1>
+              ${tournamentBadge(t.status)}
+            </div>
+            ${t.description ? `<p style="margin:.4rem 0;color:#c0c1da;">${escapeHtml(t.description)}</p>` : ''}
+            <div class="tournament-detail-meta">
+              <span>Mode: <strong>${escapeHtml(t.mode.replaceAll('_', ' '))}</strong></span>
+              <span>Format: <strong>Single Elimination</strong></span>
+              <span>Capacity: <strong>${t.registered_count} / ${t.capacity} Players</strong></span>
+              <span>Host: <strong>${escapeHtml(t.owner_display_name)}</strong></span>
+              <span>Rules: <strong>${escapeHtml(t.rules_version)}</strong></span>
+            </div>
+          </div>
+          <div class="tournament-detail-actions">
+            ${ownerActions}
+            ${playerActions}
+          </div>
+        </div>
+        ${bracketHtml}
+        <h2>Registered Participants (${participants.length})</h2>
+        <table class="rankings-table" style="margin-bottom:2rem;">
+          <thead>
+            <tr>
+              <th style="width:4rem;">Seed</th>
+              <th>Player</th>
+              <th>Status</th>
+              <th>Placement</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${partsRows || '<tr><td colspan="4" style="text-align:center;">No players registered yet.</td></tr>'}
+          </tbody>
+        </table>
+        <h2>Audit Trail</h2>
+        <div class="audit-list">
+          ${auditRows || '<p class="subcopy">No audit events recorded yet.</p>'}
+        </div>
+      </section>
+    `;
+  }
+
   function rankingsScreen() {
     app.classList.remove('library-shell');
     if (state.rankingsLoading && !state.rankingsData) {
@@ -767,6 +1142,10 @@
   }
   function render() {
     if (state.tick) clearInterval(state.tick);
+    if (state.view === 'tournaments') {
+      tournamentsScreen();
+      return;
+    }
     if (state.view === 'rankings') {
       rankingsScreen();
       return;
@@ -1008,6 +1387,176 @@
     else if (action === 'rankings-retry') {
       void refreshRankings();
     }
+    else if (action === 'open-tournament-create') {
+      state.showTournamentCreateModal = true;
+      render();
+    }
+    else if (action === 'close-tournament-create') {
+      state.showTournamentCreateModal = false;
+      render();
+    }
+    else if (action === 'tournament-submit-create') {
+      const name = document.querySelector('#tourn-name')?.value.trim();
+      const mode = document.querySelector('#tourn-mode')?.value;
+      const capacity = Number(document.querySelector('#tourn-capacity')?.value || 8);
+      const description = document.querySelector('#tourn-desc')?.value.trim();
+      if (!name) { notify('Please enter a tournament name.'); return; }
+      try {
+        const { response, data } = await playerApi('/api/tournaments', {
+          method: 'POST',
+          body: JSON.stringify({ name, mode, capacity, description: description || null })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not create tournament.');
+        notify('Tournament created!');
+        state.showTournamentCreateModal = false;
+        state.selectedTournamentId = data.id;
+        await refreshTournamentDetail(data.id);
+        render();
+      } catch (err) {
+        notify(err.message || 'Error creating tournament.');
+      }
+    }
+    else if (action === 'view-tournament') {
+      const tId = target.dataset.id;
+      if (tId) {
+        state.selectedTournamentId = tId;
+        await refreshTournamentDetail(tId);
+        render();
+      }
+    }
+    else if (action === 'back-to-tournaments') {
+      state.selectedTournamentId = null;
+      state.selectedTournamentDetail = null;
+      state.selectedTournamentBracket = null;
+      void refreshTournaments();
+    }
+    else if (action === 'tournaments-retry') {
+      void refreshTournaments();
+    }
+    else if (action === 'go-to-profile') {
+      state.view = 'profile';
+      state.screen = '';
+      setActiveNavigation();
+      void refreshProfile();
+    }
+    else if (action === 'open-tournament-reg') {
+      const tId = target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/open-registration`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not open registration.');
+        notify('Registration opened!');
+        await refreshTournamentDetail(tId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'close-tournament-reg') {
+      const tId = target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/close-registration`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not close registration.');
+        notify('Registration closed!');
+        await refreshTournamentDetail(tId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'register-tournament') {
+      const tId = target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/registration`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not register for tournament.');
+        notify('Registered successfully for tournament!');
+        if (state.selectedTournamentId) await refreshTournamentDetail(tId);
+        else await refreshTournaments();
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'withdraw-tournament') {
+      const tId = target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/registration`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not withdraw from tournament.');
+        notify('Withdrawn from tournament.');
+        if (state.selectedTournamentId) await refreshTournamentDetail(tId);
+        else await refreshTournaments();
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'start-tournament') {
+      const tId = target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/start`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not start tournament.');
+        notify('Tournament started and bracket generated!');
+        await refreshTournamentDetail(tId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'cancel-tournament') {
+      const tId = target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/cancel`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not cancel tournament.');
+        notify('Tournament cancelled.');
+        await refreshTournamentDetail(tId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'launch-tournament-match') {
+      const tId = target.dataset.tournId;
+      const mId = target.dataset.matchId;
+      try {
+        // Step 1: Issue ticket
+        const ticketRes = await playerApi(`/api/tournaments/${tId}/matches/${mId}/admission-ticket`, { method: 'POST' });
+        if (!ticketRes.response.ok) throw new Error(ticketRes.data?.error?.message || 'Could not get match admission ticket.');
+        const ticket = ticketRes.data.ticket;
+
+        // Step 2: Launch fixture
+        const launchRes = await playerApi(`/api/tournaments/${tId}/matches/${mId}/launch`, {
+          method: 'POST',
+          body: JSON.stringify({ ticket, player_name: state.profile?.display_name || state.name || 'Player' })
+        });
+        if (!launchRes.response.ok) throw new Error(launchRes.data?.error?.message || 'Could not launch match room.');
+
+        const joined = launchRes.data;
+        state.token = joined.token;
+        state.playerId = joined.player_id;
+        state.room = joined.state;
+        sessionStorage.setItem('qv-token', state.token);
+        send('reconnect', { token: joined.token });
+        state.view = 'play';
+        setActiveNavigation();
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'forfeit-tournament-match') {
+      const tId = target.dataset.tournId;
+      const mId = target.dataset.matchId;
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/matches/${mId}/forfeit`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'player_forfeit' })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not forfeit match.');
+        notify('Match forfeited.');
+        await refreshTournamentDetail(tId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'dispute-tournament-match') {
+      const tId = target.dataset.tournId;
+      const mId = target.dataset.matchId;
+      const reason = 'player_dispute';
+      try {
+        const { response, data } = await playerApi(`/api/tournaments/${tId}/matches/${mId}/disputes`, {
+          method: 'POST',
+          body: JSON.stringify({ reason })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not submit dispute.');
+        notify('Dispute recorded.');
+        await refreshTournamentDetail(tId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
   });
   app.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.target.id === 'room-code') document.querySelector('[data-action="confirm-join"]')?.click();
@@ -1018,6 +1567,14 @@
       state.ratingHistoryScope = event.target.value;
       state.ratingHistoryPage = 0;
       void refreshRatingHistory();
+    }
+    if (event.target.id === 'filter-status') {
+      state.tournamentsFilterStatus = event.target.value;
+      void refreshTournaments();
+    }
+    if (event.target.id === 'filter-mode') {
+      state.tournamentsFilterMode = event.target.value;
+      void refreshTournaments();
     }
   });
   function setActiveNavigation() {
@@ -1036,6 +1593,7 @@
     setActiveNavigation();
     if (state.view === 'profile') void refreshProfile();
     else if (state.view === 'rankings') void refreshRankings();
+    else if (state.view === 'tournaments') void refreshTournaments();
     else render();
   });
   setActiveNavigation();

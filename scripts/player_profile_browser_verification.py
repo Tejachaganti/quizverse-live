@@ -21,7 +21,8 @@ EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="quizverse-player-profile-") as temporary:
+    (PROJECT_ROOT / "tmp").mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="quizverse-player-profile-", dir=PROJECT_ROOT / "tmp") as temporary:
         database_url = f"sqlite:///{(Path(temporary) / 'profiles.sqlite3').as_posix()}"
         environment = {**os.environ, "DATABASE_URL": database_url}
         migration = subprocess.run(

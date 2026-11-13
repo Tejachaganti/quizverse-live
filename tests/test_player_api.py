@@ -159,19 +159,23 @@ def test_terminal_engine_result_is_persisted_and_appears_in_profile_history(play
     clock = Clock()
     engine._monotonic = clock.monotonic
     engine._wall_time = clock.wall
-    joined = asyncio.run(engine.create_room("Practice", "solo_practice", profile_id=profile["id"]))
-    code = joined["state"]["code"]
-    asyncio.run(engine.start_game(code, joined["player_id"]))
-    for _ in range(100):
-        state = asyncio.run(engine.snapshot(code, joined["player_id"]))
-        if state["phase"] == Phase.RESULTS:
-            break
-        room = engine._rooms[code]
-        assert room.deadline is not None
-        clock.advance(max(0.001, room.deadline - clock.monotonic()))
-        asyncio.run(engine.advance_due())
-    assert asyncio.run(engine.snapshot(code, joined["player_id"]))["phase"] == Phase.RESULTS
-    asyncio.run(client.app.state.hub._persist_completed_matches())
+
+    async def drive():
+        joined = await engine.create_room("Practice", "solo_practice", profile_id=profile["id"])
+        code = joined["state"]["code"]
+        await engine.start_game(code, joined["player_id"])
+        for _ in range(100):
+            state = await engine.snapshot(code, joined["player_id"])
+            if state["phase"] == Phase.RESULTS:
+                break
+            room = engine._rooms[code]
+            assert room.deadline is not None
+            clock.advance(max(0.001, room.deadline - clock.monotonic()))
+            await engine.advance_due()
+        assert (await engine.snapshot(code, joined["player_id"]))["phase"] == Phase.RESULTS
+        await client.app.state.hub._persist_completed_matches()
+
+    asyncio.run(drive())
 
     matches = client.get("/api/player-profiles/me/matches", headers=auth(token)).json()
     assert matches["history_available"] and matches["total"] == 1
