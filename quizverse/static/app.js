@@ -74,6 +74,20 @@
     selectedTournamentAudit: [],
     tournamentLoadingDetail: false,
     showTournamentCreateModal: false,
+    leaguesList: [],
+    leaguesTotal: 0,
+    leaguesLoading: false,
+    leaguesError: '',
+    leaguesFilterStatus: '',
+    leaguesFilterMode: '',
+    selectedLeagueId: null,
+    selectedLeagueDetail: null,
+    selectedSeasonId: null,
+    selectedSeasonDetail: null,
+    selectedSeasonAudit: [],
+    leagueLoadingDetail: false,
+    showLeagueCreateModal: false,
+    showSeasonCreateModal: false,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -632,6 +646,12 @@
     { id: 'elimination', name: 'Elimination' },
     { id: 'power_play', name: 'Power Play' },
   ];
+  const LEAGUE_SUPPORTED_MODES = [
+    { id: 'classic', name: 'Classic' },
+    { id: 'speed_challenge', name: 'Speed Challenge' },
+    { id: 'elimination', name: 'Elimination' },
+    { id: 'power_play', name: 'Power Play' },
+  ];
 
   async function refreshTournaments() {
     state.tournamentsLoading = true;
@@ -989,6 +1009,458 @@
     `;
   }
 
+  async function refreshLeagues() {
+    state.leaguesLoading = true;
+    state.leaguesError = '';
+    render();
+    try {
+      let url = '/api/leagues?limit=50';
+      if (state.leaguesFilterStatus) url += `&status=${encodeURIComponent(state.leaguesFilterStatus)}`;
+      if (state.leaguesFilterMode) url += `&mode=${encodeURIComponent(state.leaguesFilterMode)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Leagues are temporarily unavailable.');
+      const data = await res.json();
+      state.leaguesList = data.leagues || [];
+      state.leaguesTotal = data.total || 0;
+
+      if (state.selectedLeagueId) {
+        await refreshLeagueDetail(state.selectedLeagueId);
+        if (state.selectedSeasonId) {
+          await refreshSeasonDetail(state.selectedLeagueId, state.selectedSeasonId);
+        }
+      }
+    } catch (err) {
+      state.leaguesError = err.message || 'Could not load leagues.';
+    } finally {
+      state.leaguesLoading = false;
+      render();
+    }
+  }
+
+  async function refreshLeagueDetail(leagueId) {
+    state.leagueLoadingDetail = true;
+    try {
+      const res = await fetch(`/api/leagues/${leagueId}`, { cache: 'no-store' });
+      if (res.ok) state.selectedLeagueDetail = await res.json();
+    } catch (err) {
+      notify(err.message || 'Could not load league details.');
+    } finally {
+      state.leagueLoadingDetail = false;
+    }
+  }
+
+  async function refreshSeasonDetail(leagueId, seasonId) {
+    state.leagueLoadingDetail = true;
+    try {
+      const [seasonRes, auditRes] = await Promise.all([
+        fetch(`/api/leagues/${leagueId}/seasons/${seasonId}`, { cache: 'no-store' }),
+        fetch(`/api/leagues/${leagueId}/seasons/${seasonId}/audit`, { cache: 'no-store' }),
+      ]);
+      if (seasonRes.ok) state.selectedSeasonDetail = await seasonRes.json();
+      if (auditRes.ok) state.selectedSeasonAudit = await auditRes.json();
+    } catch (err) {
+      notify(err.message || 'Could not load season details.');
+    } finally {
+      state.leagueLoadingDetail = false;
+    }
+  }
+
+  function leaguesScreen() {
+    app.classList.remove('library-shell');
+    if (state.selectedSeasonId) {
+      seasonDetailScreen();
+      return;
+    }
+    if (state.selectedLeagueId) {
+      leagueDetailScreen();
+      return;
+    }
+    leagueListScreen();
+  }
+
+  function leagueBadge(status) {
+    const labels = {
+      active: 'Active',
+      archived: 'Archived',
+      draft: 'Draft',
+      registration_open: 'Open Registration',
+      registration_closed: 'Registration Closed',
+      scheduled: 'Scheduled',
+      in_progress: 'In Progress',
+      completed: 'Completed',
+      cancelled: 'Cancelled',
+    };
+    const cssClass = {
+      active: 'badge-open',
+      archived: 'badge-draft',
+      draft: 'badge-draft',
+      registration_open: 'badge-open',
+      registration_closed: 'badge-draft',
+      scheduled: 'badge-in-progress',
+      in_progress: 'badge-in-progress',
+      completed: 'badge-completed',
+      cancelled: 'badge-cancelled',
+    }[status] || 'badge-draft';
+    return `<span class="badge-tourn ${cssClass}">${escapeHtml(labels[status] || status)}</span>`;
+  }
+
+  function leagueListScreen() {
+    let content = '';
+    if (state.leaguesLoading && !state.leaguesList.length) {
+      content = '<div class="loading-state"><span class="loader"></span><p>Loading leagues…</p></div>';
+    } else if (state.leaguesError) {
+      content = `<p class="library-message" role="alert">${escapeHtml(state.leaguesError)}</p><button class="btn btn-secondary" type="button" data-action="leagues-retry">Retry</button>`;
+    } else if (!state.leaguesList.length) {
+      content = '<p class="profile-empty">No leagues found matching the filters. Create the first competitive league!</p>';
+    } else {
+      const cards = state.leaguesList.map(l => `
+        <article class="league-card">
+          <div>
+            <div class="league-card-top">
+              <h3 class="league-card-title">${escapeHtml(l.name)}</h3>
+              ${leagueBadge(l.status)}
+            </div>
+            ${l.description ? `<p class="subcopy" style="margin:.4rem 0 .6rem;font-size:.85rem;">${escapeHtml(l.description)}</p>` : ''}
+            <div class="tournament-card-meta">
+              <span>Mode: <strong>${escapeHtml(l.mode.replaceAll('_', ' '))}</strong></span>
+              <span>Format: <strong>Round-Robin</strong></span>
+              <span>Seasons: <strong>${l.seasons_count}</strong></span>
+              <span>Host: <strong>${escapeHtml(l.owner_display_name)}</strong></span>
+            </div>
+          </div>
+          <div class="tournament-card-actions">
+            <button class="btn btn-primary" type="button" data-action="view-league" data-id="${l.id}">View League</button>
+          </div>
+        </article>
+      `).join('');
+      content = `<div class="leagues-grid">${cards}</div>`;
+    }
+
+    const modal = state.showLeagueCreateModal ? `
+      <div class="create-modal-card">
+        <h2>Create Competitive League</h2>
+        <form class="profile-form">
+          <label class="form-label" for="league-name">League Name</label>
+          <input class="field" id="league-name" maxlength="80" required placeholder="e.g. Premier Classic League">
+          <label class="form-label" for="league-mode">Game Mode</label>
+          <select class="field" id="league-mode">
+            ${LEAGUE_SUPPORTED_MODES.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}
+          </select>
+          <label class="form-label" for="league-desc">Description (Optional)</label>
+          <textarea class="field" id="league-desc" maxlength="500" rows="3" placeholder="League rules, schedule overview, or notes"></textarea>
+          <div style="display:flex;gap:.75rem;margin-top:1rem;">
+            <button class="btn btn-primary" type="button" data-action="league-submit-create">Create League</button>
+            <button class="btn btn-quiet" type="button" data-action="close-league-create">Cancel</button>
+          </div>
+        </form>
+      </div>
+    ` : '';
+
+    app.innerHTML = `
+      <section class="leagues-card">
+        <div class="section-kicker">STAGE 8.4 · SEASONAL LEAGUES</div>
+        <div class="leagues-header">
+          <div>
+            <h1>Competitive Leagues</h1>
+            <p class="subcopy">Seasonal round-robin leagues with deterministic scheduling, Elo updates, and comprehensive standings.</p>
+          </div>
+          <div>
+            ${state.profileCredential
+              ? `<button class="btn btn-primary" type="button" data-action="open-league-create">Create League</button>`
+              : `<button class="btn btn-secondary" type="button" data-action="go-to-profile">Sign in to Compete</button>`}
+          </div>
+        </div>
+        ${modal}
+        <div class="leagues-filter-bar">
+          <label for="filter-league-status" style="font-size:.8rem;color:#a5a6c0;">Status:</label>
+          <select class="field" id="filter-league-status">
+            <option value="" ${state.leaguesFilterStatus === '' ? 'selected' : ''}>All Statuses</option>
+            <option value="active" ${state.leaguesFilterStatus === 'active' ? 'selected' : ''}>Active</option>
+            <option value="archived" ${state.leaguesFilterStatus === 'archived' ? 'selected' : ''}>Archived</option>
+          </select>
+          <label for="filter-league-mode" style="font-size:.8rem;color:#a5a6c0;">Mode:</label>
+          <select class="field" id="filter-league-mode">
+            <option value="" ${state.leaguesFilterMode === '' ? 'selected' : ''}>All Modes</option>
+            ${LEAGUE_SUPPORTED_MODES.map(m => `<option value="${m.id}" ${state.leaguesFilterMode === m.id ? 'selected' : ''}>${m.name}</option>`).join('')}
+          </select>
+          <span style="font-size:.8rem;color:#8587a8;margin-left:auto;">${state.leaguesTotal} Leagues</span>
+        </div>
+        ${content}
+      </section>
+    `;
+  }
+
+  function leagueDetailScreen() {
+    const l = state.selectedLeagueDetail;
+    if (!l) {
+      app.innerHTML = '<section class="leagues-card"><div class="loading-state"><span class="loader"></span><p>Loading league details…</p></div></section>';
+      return;
+    }
+
+    const myId = state.profile?.id;
+    const isOwner = myId && myId === l.owner_player_id;
+
+    const seasonsCards = (l.seasons || []).map(s => `
+      <article class="league-card">
+        <div>
+          <div class="league-card-top">
+            <h3 class="league-card-title">Season ${s.season_number}: ${escapeHtml(s.name)}</h3>
+            ${leagueBadge(s.status)}
+          </div>
+          <div class="tournament-card-meta" style="margin-top:.75rem;">
+            <span>Capacity: <strong>${s.capacity} Players</strong></span>
+            <span>Status: <strong>${escapeHtml(s.status.replaceAll('_', ' '))}</strong></span>
+          </div>
+        </div>
+        <div class="tournament-card-actions">
+          <button class="btn btn-primary" type="button" data-action="view-season" data-league-id="${l.id}" data-season-id="${s.id}">View Season &amp; Standings</button>
+        </div>
+      </article>
+    `).join('');
+
+    const modal = state.showSeasonCreateModal ? `
+      <div class="create-modal-card">
+        <h2>Create Season</h2>
+        <form class="profile-form">
+          <label class="form-label" for="season-name">Season Name</label>
+          <input class="field" id="season-name" maxlength="80" required placeholder="e.g. Inaugural Season">
+          <label class="form-label" for="season-capacity">Player Limit (Max 32)</label>
+          <select class="field" id="season-capacity">
+            <option value="4">4 Players (3 Rounds)</option>
+            <option value="8">8 Players (7 Rounds)</option>
+            <option value="16" selected>16 Players (15 Rounds)</option>
+            <option value="32">32 Players (31 Rounds)</option>
+          </select>
+          <div style="display:flex;gap:.75rem;margin-top:1rem;">
+            <button class="btn btn-primary" type="button" data-action="season-submit-create">Create Season</button>
+            <button class="btn btn-quiet" type="button" data-action="close-season-create">Cancel</button>
+          </div>
+        </form>
+      </div>
+    ` : '';
+
+    app.innerHTML = `
+      <section class="leagues-card">
+        <button class="btn btn-quiet" type="button" data-action="back-to-leagues" style="margin-bottom:1rem;">← Back to All Leagues</button>
+        <div class="league-detail-banner">
+          <div>
+            <div style="display:flex;align-items:center;gap:.75rem;">
+              <h1 style="margin:0;">${escapeHtml(l.name)}</h1>
+              ${leagueBadge(l.status)}
+            </div>
+            ${l.description ? `<p style="margin:.4rem 0;color:#c0c1da;">${escapeHtml(l.description)}</p>` : ''}
+            <div class="tournament-detail-meta">
+              <span>Mode: <strong>${escapeHtml(l.mode.replaceAll('_', ' '))}</strong></span>
+              <span>Host: <strong>${escapeHtml(l.owner_display_name)}</strong></span>
+              <span>Total Seasons: <strong>${l.seasons_count}</strong></span>
+              <span>Rules: <strong>${escapeHtml(l.rules_version)}</strong></span>
+            </div>
+          </div>
+          <div>
+            ${isOwner ? `<button class="btn btn-primary" type="button" data-action="open-season-create">New Season</button>` : ''}
+          </div>
+        </div>
+        ${modal}
+        <h2>League Seasons (${l.seasons?.length || 0})</h2>
+        <div class="leagues-grid" style="margin-top:1rem;">
+          ${seasonsCards || '<p class="profile-empty">No seasons have been created yet. The league host can launch Season 1!</p>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function seasonDetailScreen() {
+    const s = state.selectedSeasonDetail;
+    const audit = state.selectedSeasonAudit || [];
+    if (!s) {
+      app.innerHTML = '<section class="leagues-card"><div class="loading-state"><span class="loader"></span><p>Loading season details…</p></div></section>';
+      return;
+    }
+
+    const myId = state.profile?.id;
+    const isOwner = myId && myId === s.owner_player_id;
+    const participants = s.participants || [];
+    const isRegistered = myId && participants.some(p => p.player_id === myId && p.status !== 'withdrawn');
+
+    let ownerActions = '';
+    if (isOwner) {
+      if (s.status === 'draft') {
+        ownerActions += `<button class="btn btn-primary" type="button" data-action="open-season-reg" data-league-id="${s.league_id}" data-season-id="${s.id}">Open Registration</button>`;
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Cancel</button>`;
+      } else if (s.status === 'registration_open') {
+        ownerActions += `<button class="btn btn-primary" type="button" data-action="start-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Start Season</button>`;
+        ownerActions += `<button class="btn btn-secondary" type="button" data-action="close-season-reg" data-league-id="${s.league_id}" data-season-id="${s.id}">Close Registration</button>`;
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Cancel</button>`;
+      } else if (s.status === 'registration_closed') {
+        ownerActions += `<button class="btn btn-primary" type="button" data-action="start-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Start Season</button>`;
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Cancel</button>`;
+      } else if (s.status === 'in_progress') {
+        ownerActions += `<button class="btn btn-danger" type="button" data-action="cancel-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Cancel</button>`;
+      }
+    }
+
+    let playerActions = '';
+    if (s.status === 'registration_open' && state.profileCredential) {
+      if (isRegistered) {
+        playerActions += `<button class="btn btn-danger" type="button" data-action="withdraw-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Withdraw</button>`;
+      } else {
+        playerActions += `<button class="btn btn-primary" type="button" data-action="register-season" data-league-id="${s.league_id}" data-season-id="${s.id}">Register to Play</button>`;
+      }
+    }
+
+    // Standings table
+    const standings = s.standings || [];
+    const standingsRows = standings.map(row => {
+      const isSelf = myId && row.player_id === myId;
+      const isChampion = s.status === 'completed' && row.rank === 1;
+      return `
+        <tr class="${isSelf ? 'self-row' : ''} ${isChampion ? 'champion-row' : ''}">
+          <td><strong>#${row.rank}</strong></td>
+          <td><strong>${escapeHtml(row.display_name)}</strong>${isSelf ? ' <small class="brand-light">(You)</small>' : ''}${isChampion ? ' 🏆' : ''}</td>
+          <td>${row.matches_played}</td>
+          <td>${row.wins}</td>
+          <td>${row.draws}</td>
+          <td>${row.losses}</td>
+          <td>${row.byes}</td>
+          <td><strong>${row.points}</strong></td>
+          <td>${row.score_for}</td>
+          <td>${row.score_against}</td>
+          <td>${row.score_diff > 0 ? '+' : ''}${row.score_diff}</td>
+        </tr>
+      `;
+    }).join('');
+
+    // Rounds & Fixtures schedule
+    let scheduleHtml = '';
+    if (s.rounds?.length) {
+      scheduleHtml = s.rounds.map(r => {
+        const fixturesHtml = (r.fixtures || []).map(f => {
+          const isP1 = myId && f.player_one_id === myId;
+          const isP2 = myId && f.player_two_id === myId;
+          const amParticipant = isP1 || isP2;
+          const isP1Winner = f.winner_player_id && f.winner_player_id === f.player_one_id;
+          const isP2Winner = f.winner_player_id && f.winner_player_id === f.player_two_id;
+
+          let fixtureAction = '';
+          if (['scheduled', 'in_progress'].includes(f.status)) {
+            if (amParticipant) {
+              fixtureAction = `
+                <div class="fixture-actions-bar">
+                  <button class="btn btn-primary" style="padding:.25rem .55rem;font-size:.78rem;" type="button" data-action="launch-season-fixture" data-league-id="${s.league_id}" data-season-id="${s.id}" data-fixture-id="${f.id}">Play Match</button>
+                  <button class="btn btn-quiet" style="padding:.25rem .45rem;font-size:.72rem;" type="button" data-action="forfeit-season-fixture" data-league-id="${s.league_id}" data-season-id="${s.id}" data-fixture-id="${f.id}">Forfeit</button>
+                  <button class="btn btn-quiet" style="padding:.25rem .45rem;font-size:.72rem;" type="button" data-action="dispute-season-fixture" data-league-id="${s.league_id}" data-season-id="${s.id}" data-fixture-id="${f.id}">Dispute</button>
+                </div>
+              `;
+            } else {
+              fixtureAction = `<div class="fixture-actions-bar" style="font-size:.75rem;color:#a5a6c0;">${f.status === 'in_progress' ? 'In Progress' : 'Scheduled'}</div>`;
+            }
+          } else if (f.status === 'bye') {
+            fixtureAction = `<div class="fixture-actions-bar" style="font-size:.75rem;color:#d2cffa;">Scheduled Bye</div>`;
+          } else if (f.status === 'completed') {
+            fixtureAction = `<div class="fixture-actions-bar" style="font-size:.75rem;color:#53c69f;">${f.is_draw ? 'Match Draw (1 pt each)' : `Winner: ${escapeHtml(f.winner_name || 'Winner')}`}</div>`;
+          } else if (f.status === 'forfeited') {
+            fixtureAction = `<div class="fixture-actions-bar" style="font-size:.75rem;color:#ff9ab0;">Forfeited (${escapeHtml(f.result_reason || '')})</div>`;
+          } else if (f.status === 'disputed') {
+            fixtureAction = `<div class="fixture-actions-bar" style="font-size:.75rem;color:#ffe2a0;">Disputed (${escapeHtml(f.result_reason || '')})</div>`;
+          }
+
+          return `
+            <div class="fixture-card">
+              <div class="fixture-header">
+                <span>Match ${f.match_number}</span>
+                <span>${escapeHtml(f.status.toUpperCase())}</span>
+              </div>
+              <div class="fixture-player-row ${isP1Winner ? 'winner' : f.is_draw ? 'draw' : ''}">
+                <span>${escapeHtml(f.player_one_name || 'Player 1')}</span>
+                <span class="fixture-score">${f.player_one_score !== null ? f.player_one_score : '—'}</span>
+              </div>
+              <div class="fixture-player-row ${isP2Winner ? 'winner' : f.is_draw ? 'draw' : ''}">
+                <span>${escapeHtml(f.player_two_name || (f.status === 'bye' ? 'BYE' : 'Player 2'))}</span>
+                <span class="fixture-score">${f.player_two_score !== null ? f.player_two_score : '—'}</span>
+              </div>
+              ${fixtureAction}
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="round-section">
+            <h3 class="round-section-title">Round ${r.round_number} (${escapeHtml(r.status.replaceAll('_', ' '))})</h3>
+            <div class="fixtures-grid">${fixturesHtml}</div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      scheduleHtml = '<p class="profile-empty" style="margin:2rem 0;">Round-robin schedule will be generated once registration closes and the season begins.</p>';
+    }
+
+    // Audit trail
+    const auditRows = audit.map(ev => `
+      <div class="audit-row">
+        <span>${new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <div><strong class="audit-action">${escapeHtml(ev.action)}</strong>: ${escapeHtml(ev.reason || '')}</div>
+        <span>${escapeHtml(ev.actor_player_id ? 'Player' : 'System')}</span>
+      </div>
+    `).join('');
+
+    app.innerHTML = `
+      <section class="leagues-card">
+        <button class="btn btn-quiet" type="button" data-action="back-to-league" data-league-id="${s.league_id}" style="margin-bottom:1rem;">← Back to ${escapeHtml(s.league_name)}</button>
+        <div class="league-detail-banner">
+          <div>
+            <div style="display:flex;align-items:center;gap:.75rem;">
+              <h1 style="margin:0;">Season ${s.season_number}: ${escapeHtml(s.name)}</h1>
+              ${leagueBadge(s.status)}
+            </div>
+            <div class="tournament-detail-meta" style="margin-top:.4rem;">
+              <span>League: <strong>${escapeHtml(s.league_name)}</strong></span>
+              <span>Mode: <strong>${escapeHtml(s.league_mode.replaceAll('_', ' '))}</strong></span>
+              <span>Capacity: <strong>${s.registered_count} / ${s.capacity} Players</strong></span>
+              <span>Rules: <strong>${escapeHtml(s.rules_version)}</strong></span>
+            </div>
+          </div>
+          <div class="tournament-detail-actions">
+            ${ownerActions}
+            ${playerActions}
+          </div>
+        </div>
+
+        <h2>Season Standings</h2>
+        <p class="subcopy" style="font-size:.82rem;margin-bottom:.6rem;">Points system: Win = 3 pts, Draw = 1 pt, Loss = 0 pts, Bye = 0 pts. Tie-breakers: Points &gt; Head-to-Head &gt; Score Difference &gt; Wins &gt; Player ID.</p>
+        <div class="standings-table-container">
+          <table class="standings-table">
+            <thead>
+              <tr>
+                <th style="width:3.5rem;">Rank</th>
+                <th>Player</th>
+                <th>MP</th>
+                <th>W</th>
+                <th>D</th>
+                <th>L</th>
+                <th>Bye</th>
+                <th>PTS</th>
+                <th>SF</th>
+                <th>SA</th>
+                <th>SD</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${standingsRows || '<tr><td colspan="11" style="text-align:center;">No participants yet.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Round-Robin Schedule</h2>
+        <div class="fixtures-rounds-track">${scheduleHtml}</div>
+
+        <h2>Audit Trail</h2>
+        <div class="audit-list">
+          ${auditRows || '<p class="subcopy">No audit events recorded yet.</p>'}
+        </div>
+      </section>
+    `;
+  }
+
   function rankingsScreen() {
     app.classList.remove('library-shell');
     if (state.rankingsLoading && !state.rankingsData) {
@@ -1142,6 +1614,10 @@
   }
   function render() {
     if (state.tick) clearInterval(state.tick);
+    if (state.view === 'leagues') {
+      leaguesScreen();
+      return;
+    }
     if (state.view === 'tournaments') {
       tournamentsScreen();
       return;
@@ -1557,6 +2033,222 @@
         render();
       } catch (err) { notify(err.message); }
     }
+    else if (action === 'open-league-create') {
+      state.showLeagueCreateModal = true;
+      render();
+    }
+    else if (action === 'close-league-create') {
+      state.showLeagueCreateModal = false;
+      render();
+    }
+    else if (action === 'league-submit-create') {
+      const name = document.querySelector('#league-name')?.value.trim();
+      const mode = document.querySelector('#league-mode')?.value;
+      const description = document.querySelector('#league-desc')?.value.trim();
+      if (!name) { notify('Please enter a league name.'); return; }
+      try {
+        const { response, data } = await playerApi('/api/leagues', {
+          method: 'POST',
+          body: JSON.stringify({ name, mode, description: description || null })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not create league.');
+        notify('League created!');
+        state.showLeagueCreateModal = false;
+        state.selectedLeagueId = data.id;
+        state.selectedSeasonId = null;
+        await refreshLeagueDetail(data.id);
+        render();
+      } catch (err) {
+        notify(err.message || 'Error creating league.');
+      }
+    }
+    else if (action === 'view-league') {
+      const lId = target.dataset.id;
+      if (lId) {
+        state.selectedLeagueId = lId;
+        state.selectedSeasonId = null;
+        await refreshLeagueDetail(lId);
+        render();
+      }
+    }
+    else if (action === 'back-to-leagues') {
+      state.selectedLeagueId = null;
+      state.selectedLeagueDetail = null;
+      state.selectedSeasonId = null;
+      state.selectedSeasonDetail = null;
+      void refreshLeagues();
+    }
+    else if (action === 'leagues-retry') {
+      void refreshLeagues();
+    }
+    else if (action === 'open-season-create') {
+      state.showSeasonCreateModal = true;
+      render();
+    }
+    else if (action === 'close-season-create') {
+      state.showSeasonCreateModal = false;
+      render();
+    }
+    else if (action === 'season-submit-create') {
+      const name = document.querySelector('#season-name')?.value.trim();
+      const capacity = Number(document.querySelector('#season-capacity')?.value || 16);
+      if (!name) { notify('Please enter a season name.'); return; }
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${state.selectedLeagueId}/seasons`, {
+          method: 'POST',
+          body: JSON.stringify({ name, capacity })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not create season.');
+        notify('Season created!');
+        state.showSeasonCreateModal = false;
+        state.selectedSeasonId = data.id;
+        await refreshSeasonDetail(state.selectedLeagueId, data.id);
+        render();
+      } catch (err) {
+        notify(err.message || 'Error creating season.');
+      }
+    }
+    else if (action === 'view-season') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      if (lId && sId) {
+        state.selectedLeagueId = lId;
+        state.selectedSeasonId = sId;
+        await refreshSeasonDetail(lId, sId);
+        render();
+      }
+    }
+    else if (action === 'back-to-league') {
+      state.selectedSeasonId = null;
+      state.selectedSeasonDetail = null;
+      if (state.selectedLeagueId) await refreshLeagueDetail(state.selectedLeagueId);
+      render();
+    }
+    else if (action === 'open-season-reg') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/open-registration`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not open registration.');
+        notify('Registration opened!');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'close-season-reg') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/close-registration`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not close registration.');
+        notify('Registration closed!');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'register-season') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/register`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not register for season.');
+        notify('Registered successfully for season!');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'withdraw-season') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/withdraw`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not withdraw from season.');
+        notify('Withdrawn from season.');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'start-season') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/start`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not start season.');
+        notify('Season started and round-robin fixtures generated!');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'cancel-season') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/cancel`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not cancel season.');
+        notify('Season cancelled.');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'launch-season-fixture') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      const fId = target.dataset.fixtureId;
+      try {
+        // Step 1: Issue ticket
+        const ticketRes = await playerApi(`/api/leagues/${lId}/seasons/${sId}/fixtures/${fId}/ticket`, { method: 'POST' });
+        if (!ticketRes.response.ok) throw new Error(ticketRes.data?.error?.message || 'Could not get fixture admission ticket.');
+        const ticket = ticketRes.data.ticket;
+
+        // Step 2: Launch fixture
+        const launchRes = await playerApi(`/api/leagues/${lId}/seasons/${sId}/fixtures/${fId}/launch`, {
+          method: 'POST',
+          body: JSON.stringify({ ticket, player_name: state.profile?.display_name || state.name || 'Player' })
+        });
+        if (!launchRes.response.ok) throw new Error(launchRes.data?.error?.message || 'Could not launch match room.');
+
+        const joined = launchRes.data;
+        state.token = joined.token;
+        state.playerId = joined.player_id;
+        state.room = joined.state;
+        sessionStorage.setItem('qv-token', state.token);
+        send('reconnect', { token: joined.token });
+        state.view = 'play';
+        setActiveNavigation();
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'forfeit-season-fixture') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      const fId = target.dataset.fixtureId;
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/fixtures/${fId}/forfeit`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'player_forfeit' })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not forfeit fixture.');
+        notify('Fixture forfeited.');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'dispute-season-fixture') {
+      const lId = target.dataset.leagueId;
+      const sId = target.dataset.seasonId;
+      const fId = target.dataset.fixtureId;
+      const reason = 'player_dispute';
+      try {
+        const { response, data } = await playerApi(`/api/leagues/${lId}/seasons/${sId}/fixtures/${fId}/dispute`, {
+          method: 'POST',
+          body: JSON.stringify({ reason })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not submit dispute.');
+        notify('Dispute recorded.');
+        await refreshSeasonDetail(lId, sId);
+        render();
+      } catch (err) { notify(err.message); }
+    }
   });
   app.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.target.id === 'room-code') document.querySelector('[data-action="confirm-join"]')?.click();
@@ -1576,6 +2268,14 @@
       state.tournamentsFilterMode = event.target.value;
       void refreshTournaments();
     }
+    if (event.target.id === 'filter-league-status') {
+      state.leaguesFilterStatus = event.target.value;
+      void refreshLeagues();
+    }
+    if (event.target.id === 'filter-league-mode') {
+      state.leaguesFilterMode = event.target.value;
+      void refreshLeagues();
+    }
   });
   function setActiveNavigation() {
     document.querySelectorAll('[data-view]').forEach(button => {
@@ -1594,6 +2294,7 @@
     if (state.view === 'profile') void refreshProfile();
     else if (state.view === 'rankings') void refreshRankings();
     else if (state.view === 'tournaments') void refreshTournaments();
+    else if (state.view === 'leagues') void refreshLeagues();
     else render();
   });
   setActiveNavigation();

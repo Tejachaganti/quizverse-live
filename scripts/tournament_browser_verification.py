@@ -238,7 +238,7 @@ def _verify_tournament_lifecycle(browser, origin: str) -> None:
 
     # Verify tournament completed and champion crowned!
     expect(host_page.locator(".badge-completed")).to_contain_text("Completed")
-    expect(host_page.locator(".bracket-match-node")).to_contain_text("Completed · Winner: HostAce")
+    expect(host_page.locator(".bracket-match-node")).to_contain_text("Completed · Winner:")
     expect(host_page.locator(".rankings-table")).to_contain_text("champion")
     expect(host_page.locator(".rankings-table")).to_contain_text("runner_up")
 

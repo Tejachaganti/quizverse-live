@@ -355,6 +355,8 @@ class PlayerProfile(Base):
     rating_history: Mapped[list["RatingHistory"]] = relationship(back_populates="player", cascade="all, delete-orphan")
     owned_tournaments: Mapped[list["Tournament"]] = relationship(back_populates="owner")
     tournament_entries: Mapped[list["TournamentParticipant"]] = relationship(back_populates="player")
+    owned_leagues: Mapped[list["League"]] = relationship(back_populates="owner")
+    season_entries: Mapped[list["SeasonParticipant"]] = relationship(back_populates="player")
 
 
 class PlayerCredential(Base):
@@ -681,4 +683,195 @@ class TournamentFixtureTicket(Base):
     tournament: Mapped[Tournament] = relationship()
     match: Mapped[TournamentMatch] = relationship()
     player: Mapped[PlayerProfile] = relationship()
+
+
+class League(Base):
+    """Competitive league organizing seasonal round-robin competitions."""
+
+    __tablename__ = "leagues"
+    __table_args__ = (
+        CheckConstraint("length(trim(name)) BETWEEN 1 AND 80", name="ck_league_name_length"),
+        CheckConstraint("mode IN ('classic', 'speed_challenge', 'elimination', 'power_play')", name="ck_league_mode"),
+        CheckConstraint("status IN ('active', 'archived')", name="ck_league_status"),
+        Index("ix_leagues_status_created", "status", "created_at"),
+        Index("ix_leagues_owner_created", "owner_player_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="RESTRICT"), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", server_default="active", nullable=False)
+    rules_version: Mapped[str] = mapped_column(String(32), default="v1.0", server_default="v1.0", nullable=False)
+    configuration: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    owner: Mapped[PlayerProfile] = relationship(back_populates="owned_leagues")
+    seasons: Mapped[list["LeagueSeason"]] = relationship(back_populates="league", cascade="all, delete-orphan", order_by="LeagueSeason.season_number")
+
+
+class LeagueSeason(Base):
+    """An individual season within a league with registered participants and round-robin fixtures."""
+
+    __tablename__ = "league_seasons"
+    __table_args__ = (
+        UniqueConstraint("league_id", "season_number", name="uq_league_season_number"),
+        CheckConstraint("length(trim(name)) BETWEEN 1 AND 80", name="ck_season_name_length"),
+        CheckConstraint("season_number >= 1", name="ck_season_number"),
+        CheckConstraint("status IN ('draft', 'registration_open', 'registration_closed', 'in_progress', 'completed', 'cancelled')", name="ck_season_status"),
+        CheckConstraint("capacity BETWEEN 2 AND 32", name="ck_season_capacity"),
+        Index("ix_league_seasons_status_created", "status", "created_at"),
+        Index("ix_league_seasons_league_num", "league_id", "season_number"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    league_id: Mapped[str] = mapped_column(String(32), ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False)
+    season_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="draft", server_default="draft", nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, default=16, server_default="16", nullable=False)
+    registration_opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    registration_closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rules_version: Mapped[str] = mapped_column(String(32), default="v1.0", server_default="v1.0", nullable=False)
+    configuration: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    league: Mapped[League] = relationship(back_populates="seasons")
+    participants: Mapped[list["SeasonParticipant"]] = relationship(back_populates="season", cascade="all, delete-orphan", order_by="SeasonParticipant.registered_at")
+    rounds: Mapped[list["SeasonRound"]] = relationship(back_populates="season", cascade="all, delete-orphan", order_by="SeasonRound.round_number")
+    fixtures: Mapped[list["SeasonFixture"]] = relationship(back_populates="season", cascade="all, delete-orphan", order_by="SeasonFixture.match_number")
+    audit_events: Mapped[list["SeasonAuditEvent"]] = relationship(back_populates="season", cascade="all, delete-orphan", order_by="SeasonAuditEvent.timestamp")
+
+
+class SeasonParticipant(Base):
+    """Registered player in a league season with standings tracking and final placement."""
+
+    __tablename__ = "season_participants"
+    __table_args__ = (
+        UniqueConstraint("season_id", "player_id", name="uq_season_participant_player"),
+        CheckConstraint("seed IS NULL OR seed >= 1", name="ck_season_participant_seed"),
+        CheckConstraint("final_placement IS NULL OR final_placement >= 1", name="ck_season_participant_placement"),
+        CheckConstraint("status IN ('registered', 'withdrawn', 'active', 'completed', 'disqualified')", name="ck_season_participant_status"),
+        Index("ix_season_participants_season_status", "season_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    season_id: Mapped[str] = mapped_column(String(32), ForeignKey("league_seasons.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="RESTRICT"), nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    seed: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="registered", server_default="registered", nullable=False)
+    final_placement: Mapped[int | None] = mapped_column(Integer)
+
+    season: Mapped[LeagueSeason] = relationship(back_populates="participants")
+    player: Mapped[PlayerProfile] = relationship(back_populates="season_entries")
+
+
+class SeasonRound(Base):
+    """A round of fixtures in a league season."""
+
+    __tablename__ = "season_rounds"
+    __table_args__ = (
+        UniqueConstraint("season_id", "round_number", name="uq_season_round_number"),
+        CheckConstraint("round_number >= 1", name="ck_season_round_number"),
+        CheckConstraint("status IN ('pending', 'in_progress', 'completed')", name="ck_season_round_status"),
+        Index("ix_season_rounds_season_num", "season_id", "round_number"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    season_id: Mapped[str] = mapped_column(String(32), ForeignKey("league_seasons.id", ondelete="CASCADE"), nullable=False)
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", nullable=False)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    season: Mapped[LeagueSeason] = relationship(back_populates="rounds")
+    fixtures: Mapped[list["SeasonFixture"]] = relationship(back_populates="round", cascade="all, delete-orphan", order_by="SeasonFixture.match_number")
+
+
+class SeasonFixture(Base):
+    """An individual head-to-head match fixture between two players in a league round."""
+
+    __tablename__ = "season_fixtures"
+    __table_args__ = (
+        UniqueConstraint("round_id", "match_number", name="uq_season_round_match"),
+        CheckConstraint("match_number >= 1", name="ck_season_fixture_match_number"),
+        CheckConstraint("status IN ('pending', 'scheduled', 'in_progress', 'completed', 'bye', 'forfeited', 'disputed', 'cancelled')", name="ck_season_fixture_status"),
+        Index("ix_season_fixtures_season_round", "season_id", "round_id"),
+        Index("ix_season_fixtures_official", "official_match_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    season_id: Mapped[str] = mapped_column(String(32), ForeignKey("league_seasons.id", ondelete="CASCADE"), nullable=False)
+    round_id: Mapped[str] = mapped_column(String(32), ForeignKey("season_rounds.id", ondelete="CASCADE"), nullable=False)
+    match_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    player_one_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="RESTRICT"))
+    player_two_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="RESTRICT"))
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending", nullable=False)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    official_match_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("competitive_matches.id", ondelete="SET NULL"))
+    winner_player_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="RESTRICT"))
+    is_draw: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    player_one_score: Mapped[int | None] = mapped_column(Integer)
+    player_two_score: Mapped[int | None] = mapped_column(Integer)
+    result_reason: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    season: Mapped[LeagueSeason] = relationship(back_populates="fixtures")
+    round: Mapped[SeasonRound] = relationship(back_populates="fixtures")
+    player_one: Mapped[PlayerProfile | None] = relationship(foreign_keys=[player_one_id])
+    player_two: Mapped[PlayerProfile | None] = relationship(foreign_keys=[player_two_id])
+    winner: Mapped[PlayerProfile | None] = relationship(foreign_keys=[winner_player_id])
+    official_match: Mapped[CompetitiveMatch | None] = relationship()
+
+
+class SeasonAuditEvent(Base):
+    """Immutable audit trail for all league season lifecycle actions and decisions."""
+
+    __tablename__ = "season_audit_events"
+    __table_args__ = (
+        Index("ix_season_audit_season_time", "season_id", "timestamp"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    season_id: Mapped[str] = mapped_column(String(32), ForeignKey("league_seasons.id", ondelete="CASCADE"), nullable=False)
+    actor_player_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(128))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    structured_summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+
+    season: Mapped[LeagueSeason] = relationship(back_populates="audit_events")
+    actor: Mapped[PlayerProfile | None] = relationship()
+
+
+class SeasonFixtureTicket(Base):
+    """Short-lived, single-use ticket admitting an authenticated player to a season fixture."""
+
+    __tablename__ = "season_fixture_tickets"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_season_fixture_ticket_hash"),
+        Index("ix_season_tickets_fixture_player", "fixture_id", "player_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    season_id: Mapped[str] = mapped_column(String(32), ForeignKey("league_seasons.id", ondelete="CASCADE"), nullable=False)
+    fixture_id: Mapped[str] = mapped_column(String(32), ForeignKey("season_fixtures.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    season: Mapped[LeagueSeason] = relationship()
+    fixture: Mapped[SeasonFixture] = relationship()
+    player: Mapped[PlayerProfile] = relationship()
+
 

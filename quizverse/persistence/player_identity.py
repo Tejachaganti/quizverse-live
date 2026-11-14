@@ -251,10 +251,12 @@ class MatchHistoryService:
         database: Database,
         rating_service: RatingService | None = None,
         tournament_service: Any | None = None,
+        league_service: Any | None = None,
     ) -> None:
         self._database = database
         self._rating_service = rating_service or RatingService(database)
         self._tournament_service = tournament_service
+        self._league_service = league_service
 
     @property
     def rating_service(self) -> RatingService:
@@ -267,6 +269,14 @@ class MatchHistoryService:
     @tournament_service.setter
     def tournament_service(self, service: Any | None) -> None:
         self._tournament_service = service
+
+    @property
+    def league_service(self) -> Any | None:
+        return self._league_service
+
+    @league_service.setter
+    def league_service(self, service: Any | None) -> None:
+        self._league_service = service
 
     @staticmethod
     def digest_result(result: dict[str, object]) -> str:
@@ -350,6 +360,18 @@ class MatchHistoryService:
                     self._tournament_service.process_match_completion(
                         session=session,
                         tournament_match_id=str(t_match_id),
+                        official_match_id=match_id,
+                        result_payload=clean,
+                    )
+
+            # Process league fixture completion if this match was a league fixture
+            if self._league_service is not None:
+                context_data = clean.get("result_context") or {}
+                l_fixture_id = context_data.get("league_fixture_id")
+                if l_fixture_id:
+                    self._league_service.process_fixture_completion(
+                        session=session,
+                        fixture_id=str(l_fixture_id),
                         official_match_id=match_id,
                         result_payload=clean,
                     )

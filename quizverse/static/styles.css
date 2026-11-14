@@ -110,3 +110,40 @@
   .tournament-detail-banner{grid-template-columns:1fr}
   .tournaments-header{flex-direction:column;align-items:flex-start}
 }
+
+/* Stage 8.4 — Competitive League Seasons */
+.leagues-card{width:min(1100px,100%);margin:1rem auto;padding:clamp(1.25rem,4vw,2.2rem);border:1px solid rgba(170,161,255,.24);border-radius:20px;background:linear-gradient(145deg,rgba(28,27,53,.96),rgba(16,18,34,.98));box-shadow:var(--shadow)}
+.leagues-card h1{margin:.35rem 0 .6rem;font:700 clamp(2rem,5vw,2.8rem)/1.1 'Space Grotesk',sans-serif;letter-spacing:-1px}
+.leagues-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem}
+.leagues-filter-bar{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin:1rem 0 1.5rem}
+.leagues-filter-bar .field{max-width:200px;font-size:.85rem;padding:.4rem .6rem}
+.leagues-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1rem;margin-top:1rem}
+.league-card{display:flex;flex-direction:column;justify-content:space-between;gap:.9rem;padding:1.2rem;border:1px solid #383a55;border-radius:14px;background:#181a2e;transition:border-color .15s}
+.league-card:hover{border-color:#7f72db}
+.league-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:.6rem}
+.league-card-title{font:700 1.15rem 'Space Grotesk',sans-serif;color:#fff;margin:0}
+.league-detail-banner{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center;padding:1.2rem;border:1px solid rgba(159,138,255,.3);border-radius:14px;background:linear-gradient(135deg,rgba(35,32,65,.6),rgba(20,22,44,.7));margin-bottom:1.5rem}
+.season-tabs-bar{display:flex;gap:.5rem;overflow-x:auto;padding-bottom:.5rem;margin:1rem 0;border-bottom:1px solid #282a44}
+.season-tab{padding:.4rem .9rem;border-radius:8px;border:1px solid #353857;background:#1a1c32;color:#b5b5cc;font-weight:600;font-size:.85rem;cursor:pointer}
+.season-tab.active{background:#9f8aff;border-color:#9f8aff;color:#101222}
+.standings-table-container{overflow-x:auto;margin:1rem 0 2rem;border:1px solid #282a44;border-radius:14px;background:#141527}
+.standings-table{width:100%;border-collapse:collapse;font-size:.88rem;text-align:left}
+.standings-table th{background:#1a1c35;color:#9f8aff;padding:.75rem .9rem;font-weight:700;letter-spacing:.5px;border-bottom:1px solid #2c2f4f}
+.standings-table td{padding:.7rem .9rem;border-bottom:1px solid #20223a;color:#d5d5ea}
+.standings-table tr:hover td{background:#1d1f38}
+.standings-table tr.champion-row td{background:rgba(215,170,94,.12);color:#ffe2a0;font-weight:700}
+.fixtures-rounds-track{display:grid;gap:1.5rem;margin:1.5rem 0}
+.round-section{border:1px solid #2d304e;border-radius:14px;background:#16182c;padding:1rem}
+.round-section-title{font:700 1rem 'Space Grotesk',sans-serif;color:#9f8aff;margin:0 0 .75rem;padding-bottom:.4rem;border-bottom:1px solid #262842}
+.fixtures-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.85rem}
+.fixture-card{border:1px solid #323554;border-radius:10px;background:#1b1d35;overflow:hidden;display:flex;flex-direction:column}
+.fixture-header{display:flex;justify-content:space-between;align-items:center;padding:.35rem .65rem;background:#131425;font-size:.72rem;color:#8587a8;border-bottom:1px solid #262842}
+.fixture-player-row{display:flex;justify-content:space-between;align-items:center;padding:.5rem .75rem;font-size:.85rem;color:#d5d5ea;border-bottom:1px solid #23253d}
+.fixture-player-row.winner{background:rgba(83,198,159,.12);color:#a5f1d0;font-weight:700}
+.fixture-player-row.draw{background:rgba(127,114,219,.1);color:#d2cffa}
+.fixture-score{font-weight:700;font-family:ui-monospace,monospace;font-size:.92rem}
+.fixture-actions-bar{padding:.45rem .65rem;background:#131425;display:flex;justify-content:flex-end;gap:.4rem}
+@media(max-width:680px){
+  .league-detail-banner{grid-template-columns:1fr}
+  .leagues-header{flex-direction:column;align-items:flex-start}
+}

@@ -1673,6 +1673,12 @@ class GameEngine:
             result_context["tournament_id"] = room.selection["tournament_id"]
         if "tournament_match_id" in room.selection:
             result_context["tournament_match_id"] = room.selection["tournament_match_id"]
+        if "league_id" in room.selection:
+            result_context["league_id"] = room.selection["league_id"]
+        if "league_season_id" in room.selection:
+            result_context["league_season_id"] = room.selection["league_season_id"]
+        if "league_fixture_id" in room.selection:
+            result_context["league_fixture_id"] = room.selection["league_fixture_id"]
         return {
             "source": "game_engine", "engine_match_id": room.engine_match_id, "mode": room.match_config.mode.value,
             "status": "completed", "result_kind": result_kind, "rules_version": "stage-7-v1",
