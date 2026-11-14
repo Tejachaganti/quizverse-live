@@ -52,6 +52,12 @@ from quizverse.persistence.tournaments import TournamentService
 from quizverse.tournament_api import install_tournament_api
 from quizverse.persistence.leagues import LeagueService
 from quizverse.league_api import install_league_api
+from quizverse.persistence.competition import (
+    AdvancedStatsService,
+    HeadToHeadService,
+    HonorsService,
+)
+from quizverse.competition_api import install_competition_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -266,12 +272,19 @@ def create_app(
             if owns_database:
                 persistence.close()
 
+    stats_service = AdvancedStatsService(persistence)
+    h2h_service = HeadToHeadService(persistence)
+    honors_service = HonorsService(persistence)
+
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
     app.state.hub = hub
     app.state.database = persistence
     app.state.rating_service = match_history.rating_service
     app.state.tournament_service = tournament_service
     app.state.league_service = league_service
+    app.state.advanced_stats_service = stats_service
+    app.state.head_to_head_service = h2h_service
+    app.state.honors_service = honors_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
@@ -279,6 +292,7 @@ def create_app(
     install_exam_collection_api(app, persistence)
     install_tournament_api(app, tournament_service, player_identities, active_engine)
     install_league_api(app, league_service, player_identities, active_engine)
+    install_competition_api(app, stats_service, h2h_service, honors_service, player_identities)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:

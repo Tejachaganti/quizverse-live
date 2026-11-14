@@ -575,6 +575,11 @@ class MatchHistoryService:
             record = session.scalar(select(MatchTeam).where(MatchTeam.match_id == match.id, MatchTeam.team_id == own.team_id))
             if record:
                 team = {"team_id": record.team_id, "score": record.score, "correct_count": record.correct_count, "placement": record.placement, "outcome": record.outcome}
+        opponents = [
+            {"player_id": p.player_id, "display_name": p.player.display_name if p.player else "Opponent"}
+            for p in match.participants
+            if p.player_id and p.player_id != own.player_id
+        ]
         return {
             "id": match.id, "mode": match.mode, "result_kind": match.result_kind,
             "started_at": match.started_at, "completed_at": match.completed_at,
@@ -583,6 +588,7 @@ class MatchHistoryService:
             "outcome": own.outcome, "team": team,
             "disconnect_count": own.disconnect_count, "reconnect_expired": own.reconnect_expired,
             "forfeited": own.forfeited,
+            "opponents": opponents,
         }
 
 

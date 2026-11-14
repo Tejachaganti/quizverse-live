@@ -8,10 +8,11 @@ import json
 import math
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Sequence
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from quizverse.persistence.db import Database
 from quizverse.persistence.models import (
@@ -86,6 +87,7 @@ class ParticipantRatingAdjustment:
 def calculate_multiplayer_elo(
     participants: Sequence[ParticipantRatingState],
     config: RatingConfig = DEFAULT_CONFIG,
+    ineligible_pairs: set[frozenset[str]] | None = None,
 ) -> list[ParticipantRatingAdjustment]:
     """Calculate pairwise multiplayer Elo adjustments with deterministic zero-sum rounding.
 
@@ -93,6 +95,12 @@ def calculate_multiplayer_elo(
       For player i and opponent j:
         E_ij = 1 / (1 + 10 ** ((R_j - R_i) / scale))
         S_ij = 1.0 (win, p_i < p_j), 0.5 (draw, p_i == p_j), 0.0 (loss, p_i > p_j)
+
+      Fair-play anti-collusion:
+        If pair {i, j} is in ineligible_pairs, their pairwise game is neutralized:
+        S_ij = E_ij, so (S_ij - E_ij) = 0.0. This prevents rating transfer between
+        the frequent/colluding pair while preserving the exact zero-sum invariant
+        and allowing legitimate ratings against all other opponents.
 
       Averages against N-1 opponents:
         E_avg,i = sum_{j != i} E_ij / (N - 1)
@@ -139,7 +147,11 @@ def calculate_multiplayer_elo(
             expected_sum += e_ij
 
             # Pairwise actual score for i against j
-            if p_i.placement < p_j.placement:
+            pair_key = frozenset([p_i.player_id, p_j.player_id])
+            if ineligible_pairs and pair_key in ineligible_pairs:
+                # Neutralize rating transfer between ineligible pair
+                s_ij = e_ij
+            elif p_i.placement < p_j.placement:
                 s_ij = 1.0
             elif p_i.placement == p_j.placement:
                 s_ij = 0.5
@@ -289,6 +301,46 @@ class RatingEligibilityChecker:
             if active_count != len(player_ids):
                 return False, "inactive_player_profile"
 
+        # 9. Fair-play: Short-match detection (< 5.0 seconds for >= 5 questions/answers)
+        started = match_data.get("started_at")
+        completed = match_data.get("completed_at")
+        if isinstance(started, datetime) and isinstance(completed, datetime):
+            duration_sec = (completed - started).total_seconds()
+            max_answers = max(
+                (p.get("answer_count") or 0 if isinstance(p, dict) else getattr(p, "answer_count", 0) or 0)
+                for p in participants
+            ) if participants else 0
+            if max_answers >= 5 and duration_sec < 5.0:
+                return False, "match_duration_too_short"
+
+        # 10. Fair-play: Repeated-opponent match frequency monitoring (rolling 24h limit: 5 rated matches)
+        context = match_data.get("result_context") or {}
+        is_official_fixture = bool(context.get("tournament_match_id") or context.get("league_fixture_id"))
+        if not is_official_fixture and session is not None and len(player_ids) >= 2:
+            since_time = datetime.now(UTC) - timedelta(hours=24)
+            ineligible_pairs: set[frozenset[str]] = set()
+            for idx_a in range(len(player_ids)):
+                for idx_b in range(idx_a + 1, len(player_ids)):
+                    pa, pb = player_ids[idx_a], player_ids[idx_b]
+                    mp_a = aliased(MatchParticipant)
+                    mp_b = aliased(MatchParticipant)
+                    pair_count = session.scalar(
+                        select(func.count(CompetitiveMatch.id))
+                        .select_from(CompetitiveMatch)
+                        .join(mp_a, (mp_a.match_id == CompetitiveMatch.id) & (mp_a.player_id == pa))
+                        .join(mp_b, (mp_b.match_id == CompetitiveMatch.id) & (mp_b.player_id == pb))
+                        .where(
+                            CompetitiveMatch.is_rated == True,
+                            CompetitiveMatch.completed_at >= since_time,
+                        )
+                    ) or 0
+                    if pair_count >= 5:
+                        ineligible_pairs.add(frozenset([pa, pb]))
+
+            total_possible_pairs = (len(player_ids) * (len(player_ids) - 1)) // 2
+            if len(ineligible_pairs) >= total_possible_pairs:
+                return False, "pair_frequency_exceeded"
+
         return True, None
 
 
@@ -343,9 +395,37 @@ class RatingService:
         now = utc_now()
         scopes = ["global", f"mode:{match.mode}"]
 
+        # Fair-play: detect pair-frequency ineligible pairs for multiplayer matches
+        context = match.result_context or {}
+        is_official_fixture = bool(context.get("tournament_match_id") or context.get("league_fixture_id"))
+        ineligible_pairs: set[frozenset[str]] = set()
+        pids = [pid for pid, _, _ in items]
+        if not is_official_fixture and len(pids) > 2:
+            since_time = datetime.now(UTC) - timedelta(hours=24)
+            for idx_a in range(len(pids)):
+                for idx_b in range(idx_a + 1, len(pids)):
+                    pa, pb = pids[idx_a], pids[idx_b]
+                    mp_a = aliased(MatchParticipant)
+                    mp_b = aliased(MatchParticipant)
+                    pair_count = session.scalar(
+                        select(func.count(CompetitiveMatch.id))
+                        .select_from(CompetitiveMatch)
+                        .join(mp_a, (mp_a.match_id == CompetitiveMatch.id) & (mp_a.player_id == pa))
+                        .join(mp_b, (mp_b.match_id == CompetitiveMatch.id) & (mp_b.player_id == pb))
+                        .where(
+                            CompetitiveMatch.is_rated == True,
+                            CompetitiveMatch.completed_at >= since_time,
+                        )
+                    ) or 0
+                    if pair_count >= 5:
+                        ineligible_pairs.add(frozenset([pa, pb]))
+            if ineligible_pairs:
+                context_copy = dict(context)
+                context_copy["ineligible_pairs"] = [sorted(list(p)) for p in ineligible_pairs]
+                match.result_context = context_copy
+
         for scope in scopes:
             # 1. Fetch or initialize PlayerRating records for this scope
-            pids = [pid for pid, _, _ in items]
             existing_ratings = session.scalars(
                 select(PlayerRating).where(
                     PlayerRating.player_id.in_(pids),
@@ -368,8 +448,8 @@ class RatingService:
                     )
                 )
 
-            # 2. Compute multiplayer Elo adjustments
-            adjustments = calculate_multiplayer_elo(calc_states, self.config)
+            # 2. Compute multiplayer Elo adjustments with pair-level fair-play neutralization
+            adjustments = calculate_multiplayer_elo(calc_states, self.config, ineligible_pairs=ineligible_pairs)
 
             # 3. Apply updates and record history
             for adj in adjustments:

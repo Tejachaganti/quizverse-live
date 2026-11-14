@@ -88,11 +88,20 @@
     leagueLoadingDetail: false,
     showLeagueCreateModal: false,
     showSeasonCreateModal: false,
+    careerAdvancedStats: null,
+    careerHonors: null,
+    h2hData: null,
+    h2hLoading: false,
+    h2hModalOpen: false,
+    h2hOpponentId: '',
+    h2hOpponentName: '',
+    h2hError: '',
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[char]);
   const initials = name => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+  const formatMode = mode => String(mode || '').split('_').map(s => s ? s[0].toUpperCase() + s.slice(1) : '').join(' ');
   const send = (event, data = {}) => {
     if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
       notify('Reconnecting to the arena. Try again in a moment.');
@@ -604,12 +613,32 @@
     }
     const stats = state.profileStats || { history_available: false, completed_matches: 0, wins: 0, losses: 0, draws: 0, mode_breakdown: [] };
     const myRatings = state.myRatings?.global_rating;
+    const advStats = state.careerAdvancedStats || {
+      total_matches: stats.completed_matches || 0,
+      wins: stats.wins || 0,
+      losses: stats.losses || 0,
+      draws: stats.draws || 0,
+      win_percentage: stats.completed_matches ? Math.round((stats.wins / stats.completed_matches) * 1000) / 10 : 0.0,
+      current_streak: { type: 'none', count: 0 },
+      longest_win_streak: 0,
+      recent_form: { last_5: [], last_10: [] },
+      total_correct: 0,
+      total_answered: 0,
+      accuracy_pct: 0.0,
+      peak_rating: myRatings?.rating || 1000,
+      current_rating: myRatings?.rating || 1000,
+      is_provisional: myRatings?.is_provisional ?? true,
+      rated_match_count: myRatings?.rated_match_count || 0,
+      mode_performance: [],
+      forfeit_monitoring: { forfeited_count: 0, forfeit_rate_pct: 0.0, forfeit_warning: false },
+    };
+
     const ratingCard = myRatings ? `
       <h2>Competitive Elo Rating</h2>
       <div class="user-rating-banner">
         <div class="user-rating-value">${myRatings.rating}</div>
         <div class="user-rating-meta">
-          <strong>Global Rating &nbsp;${myRatings.is_provisional ? '<span class="badge-status badge-provisional">PROVISIONAL</span>' : '<span class="badge-status badge-established">ESTABLISHED</span>'}</strong>
+          <strong>Global Rating &nbsp;${myRatings.is_provisional ? '<span class="badge-status badge-provisional">PROVISIONAL</span>' : '<span class="badge-status badge-established">ESTABLISHED</span>'} <span class="badge-status" style="margin-left:.5rem;background:#35274d;color:#d8b4fe;border:1px solid #7e22ce;">PEAK ${advStats.peak_rating}</span></strong>
           <span>${myRatings.rated_match_count} rated matches · ${myRatings.wins} Wins · ${myRatings.draws} Draws · ${myRatings.losses} Losses</span>
         </div>
         ${state.myRatings?.recent_changes?.length ? `
@@ -617,7 +646,148 @@
           ${state.myRatings.recent_changes.slice(0, 5).map(c => `<span class="delta-pill ${c.rating_delta > 0 ? 'delta-pos' : c.rating_delta < 0 ? 'delta-neg' : 'delta-zero'}">${c.rating_delta > 0 ? '+' : ''}${c.rating_delta}</span>`).join('')}
         </div>` : ''}
       </div>` : (state.profileMatches.length ? '<p class="profile-empty">Casual matches completed. Complete an eligible competitive match to establish your Elo rating.</p>' : '<p class="profile-empty">No rated competitive matches completed yet.</p>');
-    const matches = state.profileMatches.map(match => `<article class="profile-match"><div><strong>${escapeHtml(match.mode.replaceAll('_', ' '))}</strong><span>${escapeHtml(new Date(match.completed_at).toLocaleString())}</span></div><div><strong>${escapeHtml(match.outcome.replaceAll('_', ' '))}</strong><span>${match.placement ? `Place ${match.placement}` : escapeHtml(match.result_kind)}</span></div><div><strong>${match.final_score ?? (match.team?.score ?? '—')}</strong><span>${match.correct_count ?? (match.team?.correct_count ?? 'Shared result')}</span></div></article>`).join('');
+
+    const streakType = advStats.current_streak?.type;
+    const streakCount = advStats.current_streak?.count || 0;
+    const streakDisplay = streakCount === 0 || streakType === 'none' ? '—' : `${streakType === 'win' ? '+' : ''}${streakCount} ${streakType.toUpperCase()}`;
+    const streakColor = streakType === 'win' ? '#74c69d' : streakType === 'loss' ? '#ff8fa3' : '#a3e7fc';
+
+    const forfeitMon = advStats.forfeit_monitoring || { forfeit_warning: false, forfeit_rate_pct: 0.0 };
+    const fairPlayDisplay = forfeitMon.forfeit_warning ? `⚠️ ${forfeitMon.forfeit_rate_pct}%` : '✓ Clean';
+    const fairPlayColor = forfeitMon.forfeit_warning ? '#ff8fa3' : '#74c69d';
+    const fairPlaySub = forfeitMon.forfeit_warning ? 'High forfeit rate' : `${forfeitMon.forfeit_rate_pct}% forfeit rate`;
+
+    const careerOverviewHtml = `
+      <h2>Career Overview</h2>
+      <div class="career-overview-grid">
+        <div class="career-stat-card">
+          <span class="career-stat-val">${advStats.win_percentage}%</span>
+          <span class="career-stat-label">Win Rate</span>
+          <span class="career-stat-sub">${advStats.wins}W · ${advStats.losses}L · ${advStats.draws}D</span>
+        </div>
+        <div class="career-stat-card">
+          <span class="career-stat-val" style="color:${streakColor}">${streakDisplay}</span>
+          <span class="career-stat-label">Current Streak</span>
+          <span class="career-stat-sub">Recent consecutive</span>
+        </div>
+        <div class="career-stat-card">
+          <span class="career-stat-val" style="color:#ffd700">${advStats.longest_win_streak}</span>
+          <span class="career-stat-label">Best Streak</span>
+          <span class="career-stat-sub">Consecutive wins</span>
+        </div>
+        <div class="career-stat-card">
+          <span class="career-stat-val">${advStats.accuracy_pct}%</span>
+          <span class="career-stat-label">Accuracy</span>
+          <span class="career-stat-sub">${advStats.total_correct} / ${advStats.total_answered} correct</span>
+        </div>
+        <div class="career-stat-card">
+          <span class="career-stat-val" style="color:${fairPlayColor}">${fairPlayDisplay}</span>
+          <span class="career-stat-label">Fair Play</span>
+          <span class="career-stat-sub">${fairPlaySub}</span>
+        </div>
+      </div>
+    `;
+
+    const renderFormPills = (outcomes) => (outcomes || []).map(out => {
+      const cls = out === 'win' ? 'form-pill-win' : out === 'loss' ? 'form-pill-loss' : 'form-pill-draw';
+      const letter = out === 'win' ? 'W' : out === 'loss' ? 'L' : 'D';
+      return `<span class="form-pill ${cls}" title="${out.toUpperCase()}">${letter}</span>`;
+    }).join('');
+
+    const form5Html = renderFormPills(advStats.recent_form?.last_5);
+    const form10Html = renderFormPills(advStats.recent_form?.last_10);
+    const recentFormHtml = `
+      <h2>Recent Form</h2>
+      <div class="form-guide-container" style="margin-bottom:1.25rem">
+        <div style="font-size:.85rem;color:#b5b5cc;margin-bottom:.4rem">Last 5 Matches:</div>
+        <div class="form-guide-track">${form5Html || '<span class="microcopy">No eligible matches yet</span>'}</div>
+        ${form10Html && advStats.recent_form?.last_10?.length > 5 ? `
+        <div style="font-size:.85rem;color:#b5b5cc;margin-top:.8rem;margin-bottom:.4rem">Last 10 Matches:</div>
+        <div class="form-guide-track">${form10Html}</div>` : ''}
+      </div>
+    `;
+
+    const trophies = state.careerHonors?.trophies || [];
+    const trophiesHtml = trophies.length ? `
+      <div class="trophy-shelf">
+        ${trophies.map(t => `
+          <article class="trophy-card tier-${t.tier}">
+            <span class="trophy-badge">${t.tier === 'gold' ? '🥇' : t.tier === 'silver' ? '🥈' : '🥉'} ${escapeHtml(t.title)}</span>
+            <h3 class="trophy-title">${escapeHtml(t.event_name)}</h3>
+            <span class="trophy-meta">${escapeHtml(formatMode(t.mode))} · ${t.completed_at ? new Date(t.completed_at).toLocaleDateString() : 'Completed'}</span>
+          </article>
+        `).join('')}
+      </div>
+    ` : '<p class="profile-empty">No tournament or league trophies yet. Reach a tournament final or league podium to earn honors!</p>';
+
+    const modePerfRows = (advStats.mode_performance || []).map(m => `
+      <tr>
+        <td style="font-weight:600;color:#fff">${escapeHtml(formatMode(m.mode))}</td>
+        <td>${m.matches}</td>
+        <td>${m.wins}W - ${m.losses}L - ${m.draws}D</td>
+        <td style="font-weight:700;color:#a3e7fc">${m.win_rate_pct}%</td>
+        <td>${m.avg_score}</td>
+        <td>${m.best_score}</td>
+        <td>${m.accuracy_pct}%</td>
+      </tr>
+    `).join('');
+
+    const modeAnalyticsHtml = (advStats.mode_performance && advStats.mode_performance.length) ? `
+      <h2>Game Mode Analytics</h2>
+      <div class="standings-table-container" style="margin-bottom:1.5rem">
+        <table class="standings-table">
+          <thead>
+            <tr>
+              <th>Mode</th>
+              <th>Matches</th>
+              <th>Record</th>
+              <th>Win %</th>
+              <th>Avg Score</th>
+              <th>Best Score</th>
+              <th>Accuracy</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${modePerfRows}
+          </tbody>
+        </table>
+      </div>
+    ` : '';
+
+    const h2hSearchHtml = `
+      <h2>Head-to-Head Comparison</h2>
+      <p class="subcopy" style="margin-bottom:.75rem">Compare your competitive record and pairwise stats against any opponent.</p>
+      <div class="h2h-lookup-bar" style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-bottom:1.5rem">
+        <input class="field" id="h2h-opponent-input" placeholder="Paste Opponent Player Profile ID (32 hex characters)" style="max-width:380px;font-size:.85rem;padding:.5rem .75rem" maxlength="64">
+        <button class="btn btn-secondary" type="button" data-action="profile-h2h-compare">Compare Head-to-Head</button>
+      </div>
+    `;
+
+    const matches = state.profileMatches.map(match => {
+      const opponents = (match.opponents || []).map(op => `
+        <button class="btn btn-secondary" type="button" data-action="open-h2h" data-opponent-id="${escapeHtml(op.player_id)}" data-opponent-name="${escapeHtml(op.display_name)}" style="padding:.2rem .5rem;font-size:.74rem;line-height:1;margin-left:.25rem">
+          Vs ${escapeHtml(op.display_name)}
+        </button>
+      `).join('');
+      return `
+        <article class="profile-match">
+          <div>
+            <strong>${escapeHtml(match.mode.replaceAll('_', ' '))}</strong>
+            <span>${escapeHtml(new Date(match.completed_at).toLocaleString())}</span>
+            ${opponents ? `<div style="margin-top:.35rem;display:flex;align-items:center;flex-wrap:wrap;gap:.25rem"><span style="font-size:.75rem;color:#9f8aff">Opponents:</span> ${opponents}</div>` : ''}
+          </div>
+          <div>
+            <strong>${escapeHtml(match.outcome.replaceAll('_', ' '))}</strong>
+            <span>${match.placement ? `Place ${match.placement}` : escapeHtml(match.result_kind)}</span>
+          </div>
+          <div>
+            <strong>${match.final_score ?? (match.team?.score ?? '—')}</strong>
+            <span>${match.correct_count ?? (match.team?.correct_count ?? 'Shared result')}</span>
+          </div>
+        </article>
+      `;
+    }).join('');
+
     const ratingHistoryRows = state.ratingHistory.map(entry => `<article class="rating-history-row"><div><strong>${escapeHtml(entry.mode.replaceAll('_', ' '))} · ${escapeHtml(entry.scope === 'global' ? 'Global' : entry.scope.replace('mode:', 'Mode: ').replaceAll('_', ' '))}</strong><span>${escapeHtml(new Date(entry.created_at).toLocaleString())}</span></div><div><strong class="${entry.rating_delta > 0 ? 'delta-pos' : entry.rating_delta < 0 ? 'delta-neg' : 'delta-zero'}">${entry.rating_delta > 0 ? '+' : ''}${entry.rating_delta}</strong><span>${entry.prior_rating} → ${entry.new_rating}</span></div></article>`).join('');
     const ratingHistoryPages = Math.max(1, Math.ceil(state.ratingHistoryTotal / 20));
     const ratingHistoryHtml = state.ratingHistoryLoading
@@ -629,7 +799,131 @@
           : '<p class="profile-empty">No rating changes yet. Eligible signed-in matches will appear here.</p>';
     const ratingScopes = [['', 'All scopes'], ['global', 'Global'], ...RANKING_MODES.filter(mode => mode.id !== 'global').map(mode => [`mode:${mode.id}`, mode.name])];
     const ratingScopeOptions = ratingScopes.map(([value, label]) => `<option value="${value}" ${state.ratingHistoryScope === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
-    app.innerHTML = `<section class="profile-card"><div class="section-kicker">PLAYER PROFILE</div><h1>${escapeHtml(state.profile.display_name)}</h1><p class="subcopy">Pseudonymous identity · no email or personal details</p>${state.profileNotice ? `<p class="library-message" role="status">${escapeHtml(state.profileNotice)}</p>` : ''}<form class="profile-name-form"><label class="form-label" for="profile-name-update">Display name</label><input class="field" id="profile-name-update" maxlength="24" required value="${escapeHtml(state.profile.display_name)}"><button class="btn btn-secondary" type="button" data-action="profile-update">Save name</button></form>${state.oneTimeCredential ? '<div class="profile-warning" role="status">A new credential is ready. Copy it now; it will not be shown again. If lost, it cannot be recovered.</div><button class="btn btn-secondary" type="button" data-action="profile-copy-credential">Copy one-time credential</button>' : ''}<div class="profile-actions"><button class="btn btn-secondary" type="button" data-action="profile-rotate">Rotate credential</button><button class="btn btn-quiet" type="button" data-action="profile-logout">Sign out on this tab</button><button class="btn btn-danger" type="button" data-action="profile-delete">Delete profile</button></div>${ratingCard}<h2>Rating history</h2><label class="form-label" for="rating-history-scope">Filter rating scope</label><select class="field rating-history-scope" id="rating-history-scope">${ratingScopeOptions}</select>${ratingHistoryHtml}<h2>Competitive record</h2>${stats.history_available ? `<div class="profile-stats"><article><strong>${stats.completed_matches}</strong><span>Matches</span></article><article><strong>${stats.wins}</strong><span>Wins</span></article><article><strong>${stats.draws}</strong><span>Draws</span></article><article><strong>${stats.losses}</strong><span>Losses</span></article></div>` : '<p class="profile-empty">No persisted match history yet. This is different from a zero win or loss record.</p>'}<h2>Match history</h2>${matches || '<p class="profile-empty">No profile-linked completed matches yet. Join or create a match while signed in to add one.</p>'}${state.profileHistoryTotal > state.profileMatches.length ? `<button class="btn btn-secondary" type="button" data-action="profile-more">Load more</button>` : ''}<p class="microcopy">Profile deletion revokes credentials and anonymizes this profile in retained match records. Match integrity facts may remain without identifying details.</p></section>`;
+
+    let h2hModalHtml = '';
+    if (state.h2hModalOpen) {
+      let modalBody = '';
+      if (state.h2hLoading) {
+        modalBody = '<div class="loading-state"><span class="loader"></span><p>Loading head-to-head records…</p></div>';
+      } else if (state.h2hError) {
+        modalBody = `<p class="library-message" role="alert">${escapeHtml(state.h2hError)}</p>`;
+      } else if (state.h2hData) {
+        const d = state.h2hData;
+        const p1 = d.player_one;
+        const p2 = d.player_two;
+        const encounters = (d.recent_encounters || []).map(enc => `
+          <div class="h2h-match-row">
+            <div>
+              <strong>${escapeHtml(formatMode(enc.mode))}</strong>
+              <span style="font-size:.76rem;color:#8e90b0;margin-left:.5rem">${new Date(enc.completed_at).toLocaleDateString()}</span>
+            </div>
+            <div style="font-weight:700;font-family:ui-monospace,monospace">
+              <span style="color:${enc.player_one_score > enc.player_two_score ? '#74c69d' : '#fff'}">${enc.player_one_score}</span>
+              <span style="color:#8e90b0"> - </span>
+              <span style="color:${enc.player_two_score > enc.player_one_score ? '#74c69d' : '#fff'}">${enc.player_two_score}</span>
+            </div>
+            <div>
+              <span class="badge-tourn ${enc.winner_id === p1.id ? 'badge-completed' : enc.winner_id === p2.id ? 'badge-cancelled' : 'badge-draft'}">
+                ${enc.winner_id === p1.id ? 'Win' : enc.winner_id === p2.id ? 'Loss' : 'Draw'}
+              </span>
+            </div>
+          </div>
+        `).join('');
+
+        modalBody = `
+          <div class="h2h-vs-header">
+            <div class="h2h-player-box">
+              <strong>${escapeHtml(p1.display_name)}</strong>
+              <span>Elo ${p1.rating}</span>
+            </div>
+            <div class="h2h-vs-divider">VS</div>
+            <div class="h2h-player-box">
+              <strong>${escapeHtml(p2.display_name)}</strong>
+              <span>Elo ${p2.rating}</span>
+            </div>
+          </div>
+          <div class="h2h-metrics-grid">
+            <article>
+              <strong>${d.player_one_wins} - ${d.draws} - ${d.player_two_wins}</strong>
+              <span>Record (W - D - L)</span>
+            </article>
+            <article>
+              <strong>${d.player_one_win_pct}% vs ${d.player_two_win_pct}%</strong>
+              <span>Win Rate</span>
+            </article>
+            <article>
+              <strong>${d.player_one_avg_score} vs ${d.player_two_avg_score}</strong>
+              <span>Average Score</span>
+            </article>
+            <article>
+              <strong>${d.score_difference > 0 ? '+' : ''}${d.score_difference}</strong>
+              <span>Score Differential</span>
+            </article>
+            <article>
+              <strong>${d.elo_difference > 0 ? '+' : ''}${d.elo_difference}</strong>
+              <span>Rating Differential</span>
+            </article>
+            <article>
+              <strong>${d.total_encounters}</strong>
+              <span>Shared Matches</span>
+            </article>
+          </div>
+          <h3 style="font:700 1.1rem 'Space Grotesk',sans-serif;margin:1.2rem 0 .6rem;color:#fff">Shared Encounters</h3>
+          <div class="h2h-matches-list">
+            ${encounters || '<p class="profile-empty">No shared matches found between these two players yet.</p>'}
+          </div>
+        `;
+      }
+      h2hModalHtml = `
+        <div class="h2h-modal-backdrop" data-action="h2h-close">
+          <div class="h2h-modal" onclick="event.stopPropagation()">
+            <div class="h2h-header-bar">
+              <h2>Head-to-Head Comparison</h2>
+              <button class="btn btn-quiet" type="button" data-action="h2h-close" style="padding:.25rem .6rem">✕ Close</button>
+            </div>
+            ${modalBody}
+          </div>
+        </div>
+      `;
+    }
+
+    app.innerHTML = `
+      ${h2hModalHtml}
+      <section class="profile-card">
+        <div class="section-kicker">PLAYER PROFILE &amp; CAREER HUB</div>
+        <h1>${escapeHtml(state.profile.display_name)}</h1>
+        <p class="subcopy">Pseudonymous identity · no email or personal details</p>
+        ${state.profileNotice ? `<p class="library-message" role="status">${escapeHtml(state.profileNotice)}</p>` : ''}
+        <form class="profile-name-form">
+          <label class="form-label" for="profile-name-update">Display name</label>
+          <input class="field" id="profile-name-update" maxlength="24" required value="${escapeHtml(state.profile.display_name)}">
+          <button class="btn btn-secondary" type="button" data-action="profile-update">Save name</button>
+        </form>
+        ${state.oneTimeCredential ? '<div class="profile-warning" role="status">A new credential is ready. Copy it now; it will not be shown again. If lost, it cannot be recovered.</div><button class="btn btn-secondary" type="button" data-action="profile-copy-credential">Copy one-time credential</button>' : ''}
+        <div class="profile-actions">
+          <button class="btn btn-secondary" type="button" data-action="profile-rotate">Rotate credential</button>
+          <button class="btn btn-quiet" type="button" data-action="profile-logout">Sign out on this tab</button>
+          <button class="btn btn-danger" type="button" data-action="profile-delete">Delete profile</button>
+        </div>
+        ${ratingCard}
+        ${careerOverviewHtml}
+        ${recentFormHtml}
+        <h2>Career Trophy Cabinet</h2>
+        ${trophiesHtml}
+        ${modeAnalyticsHtml}
+        ${h2hSearchHtml}
+        <h2>Rating history</h2>
+        <label class="form-label" for="rating-history-scope">Filter rating scope</label>
+        <select class="field rating-history-scope" id="rating-history-scope">${ratingScopeOptions}</select>
+        ${ratingHistoryHtml}
+        <h2>Competitive record</h2>
+        ${stats.history_available ? `<div class="profile-stats"><article><strong>${stats.completed_matches}</strong><span>Matches</span></article><article><strong>${stats.wins}</strong><span>Wins</span></article><article><strong>${stats.draws}</strong><span>Draws</span></article><article><strong>${stats.losses}</strong><span>Losses</span></article></div>` : '<p class="profile-empty">No persisted match history yet. This is different from a zero win or loss record.</p>'}
+        <h2>Match history</h2>
+        ${matches || '<p class="profile-empty">No profile-linked completed matches yet. Join or create a match while signed in to add one.</p>'}
+        ${state.profileHistoryTotal > state.profileMatches.length ? `<button class="btn btn-secondary" type="button" data-action="profile-more">Load more</button>` : ''}
+        <p class="microcopy">Profile deletion revokes credentials and anonymizes this profile in retained match records. Match integrity facts may remain without identifying details.</p>
+      </section>
+    `;
   }
   const RANKING_MODES = [
     { id: 'global', name: 'Global' },
@@ -1565,16 +1859,24 @@
     if (!state.profileCredential) { state.profile = null; render(); return; }
     state.profileLoading = true; state.profileNotice = ''; render();
     try {
-      const [profileResult, statsResult, matchesResult, ratingsResult] = await Promise.all([
+      const [profileResult, statsResult, matchesResult, ratingsResult, advStatsResult, honorsResult] = await Promise.all([
         playerApi('/api/player-profiles/me'), playerApi('/api/player-profiles/me/competitive-stats'),
         playerApi(`/api/player-profiles/me/matches?limit=20&offset=${state.profilePage * 20}`),
         playerApi('/api/player-profiles/me/ratings'),
+        playerApi('/api/players/me/statistics/advanced'),
+        playerApi('/api/players/me/honors'),
       ]);
       if (profileResult.response.status === 401) throw new Error('Your credential was rejected. Sign in with a valid saved credential.');
       if (!profileResult.response.ok || !statsResult.response.ok || !matchesResult.response.ok) throw new Error('Player profile storage is temporarily unavailable. Try again.');
       state.profile = profileResult.data; state.profileStats = statsResult.data;
       if (ratingsResult && ratingsResult.response.ok) {
         state.myRatings = ratingsResult.data;
+      }
+      if (advStatsResult && advStatsResult.response.ok) {
+        state.careerAdvancedStats = advStatsResult.data;
+      }
+      if (honorsResult && honorsResult.response.ok) {
+        state.careerHonors = honorsResult.data;
       }
       await refreshRatingHistory(false);
       state.profileMatches = state.profilePage ? [...state.profileMatches, ...(matchesResult.data.matches || [])] : (matchesResult.data.matches || []);
@@ -1748,6 +2050,7 @@
       sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
       state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
       state.myRatings = null; state.ratingHistory = []; state.ratingHistoryTotal = 0; state.ratingHistoryPage = 0;
+      state.careerAdvancedStats = null; state.careerHonors = null; state.h2hData = null; state.h2hModalOpen = false;
       state.oneTimeCredential = ''; state.profileNotice = 'Signed out on this tab.'; render();
     } else if (action === 'profile-delete') {
       if (!window.confirm('Delete this pseudonymous profile? Credentials will be revoked and retained match records anonymized. This cannot be undone.')) return;
@@ -1756,6 +2059,7 @@
       sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
       state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
       state.myRatings = null; state.ratingHistory = []; state.ratingHistoryTotal = 0; state.ratingHistoryPage = 0;
+      state.careerAdvancedStats = null; state.careerHonors = null; state.h2hData = null; state.h2hModalOpen = false;
       state.oneTimeCredential = ''; state.profileNotice = 'Profile deleted and identifying profile data anonymized.'; render();
     } else if (action === 'profile-more') {
       state.profilePage += 1; await refreshProfile();
@@ -1765,6 +2069,61 @@
       if ((state.ratingHistoryPage + 1) * 20 < state.ratingHistoryTotal) { state.ratingHistoryPage += 1; await refreshRatingHistory(); }
     } else if (action === 'rating-history-retry') {
       await refreshRatingHistory();
+    } else if (action === 'open-h2h') {
+      const opponentId = target.dataset.opponentId;
+      const opponentName = target.dataset.opponentName || '';
+      if (!opponentId) return;
+      state.h2hModalOpen = true;
+      state.h2hLoading = true;
+      state.h2hError = '';
+      state.h2hData = null;
+      state.h2hOpponentId = opponentId;
+      state.h2hOpponentName = opponentName;
+      render();
+      try {
+        const { response, data } = await playerApi(`/api/competition/head-to-head?player_one_id=me&player_two_id=${encodeURIComponent(opponentId)}`);
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not load head-to-head comparison.');
+        state.h2hData = data;
+      } catch (err) {
+        state.h2hError = err.message || 'Could not load head-to-head comparison.';
+      } finally {
+        state.h2hLoading = false;
+        render();
+      }
+    } else if (action === 'profile-h2h-compare') {
+      const oppInput = document.querySelector('#h2h-opponent-input');
+      const opponentId = oppInput?.value.trim();
+      if (!opponentId) {
+        notify('Please enter an opponent player profile ID.');
+        oppInput?.focus();
+        return;
+      }
+      if (state.profile && opponentId === state.profile.id) {
+        notify('Cannot compare head-to-head with yourself.');
+        return;
+      }
+      state.h2hModalOpen = true;
+      state.h2hLoading = true;
+      state.h2hError = '';
+      state.h2hData = null;
+      state.h2hOpponentId = opponentId;
+      state.h2hOpponentName = '';
+      render();
+      try {
+        const { response, data } = await playerApi(`/api/competition/head-to-head?player_one_id=me&player_two_id=${encodeURIComponent(opponentId)}`);
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not load head-to-head comparison.');
+        state.h2hData = data;
+      } catch (err) {
+        state.h2hError = err.message || 'Could not load head-to-head comparison.';
+      } finally {
+        state.h2hLoading = false;
+        render();
+      }
+    } else if (action === 'h2h-close') {
+      state.h2hModalOpen = false;
+      state.h2hData = null;
+      state.h2hError = '';
+      render();
     } else if (action === 'quiz-library') {
       state.view = 'library';
       state.screen = '';
