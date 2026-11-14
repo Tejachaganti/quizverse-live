@@ -34,8 +34,9 @@ class SocialError(Exception):
 class BlockService:
     """Manages player blocking and mutual social interaction suppression."""
 
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, on_friendship_severed: Callable[[str, str], Any] | None = None) -> None:
         self._database = database
+        self.on_friendship_severed = on_friendship_severed
 
     def block_player(self, blocker_id: str, target_id: str) -> dict[str, Any]:
         if blocker_id == target_id:
@@ -84,6 +85,12 @@ class BlockService:
                 )
                 .values(status="cancelled", updated_at=now)
             )
+
+            if self.on_friendship_severed is not None:
+                try:
+                    self.on_friendship_severed(blocker_id, target_id)
+                except Exception:
+                    pass
 
             return {
                 "blocked_id": target_id,
@@ -158,10 +165,14 @@ class FriendService:
         database: Database,
         block_service: BlockService,
         rating_service: RatingService | None = None,
+        presence_provider: Callable[[str], str] | None = None,
+        on_friendship_severed: Callable[[str, str], Any] | None = None,
     ) -> None:
         self._database = database
         self._block_service = block_service
         self._rating_service = rating_service or RatingService(database)
+        self.presence_provider = presence_provider
+        self.on_friendship_severed = on_friendship_severed
 
     def are_friends(self, p1: str, p2: str, session=None) -> bool:
         if p1 == p2:
@@ -363,7 +374,14 @@ class FriendService:
                     Friendship.player_two_id == p2,
                 )
             )
-            return result.rowcount > 0
+            removed = result.rowcount > 0
+
+        if removed and self.on_friendship_severed is not None:
+            try:
+                self.on_friendship_severed(player_id, friend_id)
+            except Exception:
+                pass
+        return removed
 
     def list_friends(self, player_id: str) -> list[dict[str, Any]]:
         with self._database.session() as session:
@@ -433,7 +451,7 @@ class FriendService:
                     "draws": draws,
                     "win_percentage": win_pct,
                     "friended_at": cat_map.get(fid),
-                    "presence": {"status": "unavailable"},
+                    "presence": {"status": self.presence_provider(fid) if self.presence_provider is not None else "offline"},
                 })
 
             return results

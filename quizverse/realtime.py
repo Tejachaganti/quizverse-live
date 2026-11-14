@@ -64,6 +64,12 @@ from quizverse.persistence.social import (
     PlayerDiscoveryService,
 )
 from quizverse.social_api import install_social_api
+from quizverse.presence import (
+    LocalMemoryPresenceBroker,
+    PresenceService,
+    PresenceTicketService,
+)
+from quizverse.presence_api import install_presence_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -87,9 +93,13 @@ class ConnectionHub:
         self.identities = identities
         self.tickets = tickets or LiveIdentityTickets()
         self.match_history = match_history
+        self.presence_service: PresenceService | None = None
         self.connections: dict[tuple[str, str], WebSocket] = {}
         self.peer_attempts: dict[str, deque[float]] = {}
         self.connection_lock = asyncio.Lock()
+
+    def allow_origin(self, websocket: WebSocket) -> bool:
+        return _valid_origin(websocket)
 
     async def allow_connection(self, peer: str) -> bool:
         now = time.monotonic()
@@ -119,13 +129,25 @@ class ConnectionHub:
                 await previous.close(code=4001, reason="Session moved to a new connection")
             except RuntimeError:
                 pass
+        if self.presence_service is not None:
+            room = getattr(self.engine, "_rooms", {}).get(identity[0])
+            if room:
+                player = room.players.get(identity[1])
+                if player and player.profile_id:
+                    asyncio.create_task(self.presence_service.notify_activity_change([player.profile_id]))
 
     async def detach(self, identity: tuple[str, str], websocket: WebSocket) -> bool:
         async with self.connection_lock:
             if self.connections.get(identity) is not websocket:
                 return False
             del self.connections[identity]
-            return True
+        if self.presence_service is not None:
+            room = getattr(self.engine, "_rooms", {}).get(identity[0])
+            if room:
+                player = room.players.get(identity[1])
+                if player and player.profile_id:
+                    asyncio.create_task(self.presence_service.notify_activity_change([player.profile_id]))
+        return True
 
     async def send(self, websocket: WebSocket, event: str, state: dict[str, Any] | None = None, **extra: Any) -> None:
         payload: dict[str, Any] = {"event": event, **extra}
@@ -183,12 +205,23 @@ class ConnectionHub:
             states = await self.engine.advance_due()
             for code in dict.fromkeys(str(state["code"]) for state in states):
                 await self.broadcast_room(code, "state")
+            if self.presence_service is not None and states:
+                pids = [
+                    p.profile_id
+                    for r in getattr(self.engine, "_rooms", {}).values()
+                    for p in r.players.values()
+                    if p.profile_id
+                ]
+                if pids:
+                    await self.presence_service.notify_activity_change(pids)
             await self._persist_completed_matches()
             if time.monotonic() - last_cleanup >= 10:
                 removed_rooms = await self.engine.cleanup()
                 for code in await self.engine.room_codes():
                     await self.broadcast_room(code, "player-expired")
                 last_cleanup = time.monotonic()
+                if self.presence_service is not None:
+                    await self.presence_service.maintenance_step()
                 # A removed room has no remaining authorized recipients; ``removed_rooms`` is
                 # deliberately retained here for observability while avoiding phantom events.
                 _ = removed_rooms
@@ -256,6 +289,36 @@ def create_app(
     match_history = MatchHistoryService(persistence, tournament_service=tournament_service, league_service=league_service)
     hub = ConnectionHub(active_engine, identities=player_identities, tickets=player_tickets, match_history=match_history)
 
+    stats_service = AdvancedStatsService(persistence)
+    h2h_service = HeadToHeadService(persistence)
+    honors_service = HonorsService(persistence)
+    block_service = BlockService(persistence)
+    friend_service = FriendService(persistence, block_service, match_history.rating_service)
+    discovery_service = PlayerDiscoveryService(persistence, friend_service, block_service, stats_service, honors_service)
+
+    presence_tickets = PresenceTicketService()
+    presence_broker = LocalMemoryPresenceBroker()
+    presence_service = PresenceService(
+        broker=presence_broker,
+        engine=active_engine,
+        friend_service=friend_service,
+        block_service=block_service,
+        tickets=presence_tickets,
+        identities=player_identities,
+    )
+    friend_service.presence_provider = presence_service.get_cached_state
+
+    def _on_friendship_severed(p1: str, p2: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(presence_service.notify_friendship_severed(p1, p2))
+        except RuntimeError:
+            pass
+
+    friend_service.on_friendship_severed = _on_friendship_severed
+    block_service.on_friendship_severed = _on_friendship_severed
+    hub.presence_service = presence_service
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
@@ -266,24 +329,24 @@ def create_app(
             logger.error("Stored match rating reconciliation failed; it will retry on the next startup. error_type=%s", type(error).__name__)
         stop = asyncio.Event()
         task = asyncio.create_task(hub.scheduler(stop), name="quizverse-room-scheduler")
+        presence_task = asyncio.create_task(presence_service.maintenance_loop(stop), name="quizverse-presence-maintenance")
         try:
             yield
         finally:
             stop.set()
             task.cancel()
+            presence_task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+            try:
+                await presence_task
+            except asyncio.CancelledError:
+                pass
+            await presence_service.shutdown()
             if owns_database:
                 persistence.close()
-
-    stats_service = AdvancedStatsService(persistence)
-    h2h_service = HeadToHeadService(persistence)
-    honors_service = HonorsService(persistence)
-    block_service = BlockService(persistence)
-    friend_service = FriendService(persistence, block_service, match_history.rating_service)
-    discovery_service = PlayerDiscoveryService(persistence, friend_service, block_service, stats_service, honors_service)
 
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
     app.state.hub = hub
@@ -297,6 +360,8 @@ def create_app(
     app.state.block_service = block_service
     app.state.friend_service = friend_service
     app.state.discovery_service = discovery_service
+    app.state.presence_service = presence_service
+    app.state.presence_tickets = presence_tickets
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
@@ -306,6 +371,7 @@ def create_app(
     install_league_api(app, league_service, player_identities, active_engine)
     install_competition_api(app, stats_service, h2h_service, honors_service, player_identities)
     install_social_api(app, discovery_service, friend_service, block_service, player_identities)
+    install_presence_api(app, presence_service, presence_tickets, player_identities)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:

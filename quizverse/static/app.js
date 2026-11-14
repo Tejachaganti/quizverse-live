@@ -107,6 +107,11 @@
     socialNotice: '',
     selectedPublicProfile: null,
     publicProfileLoading: false,
+    friendPresence: {},
+    presenceWs: null,
+    presenceHeartbeatTimer: null,
+    presenceReconnectTimer: null,
+    presenceReconnectDelay: 1000,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -1880,6 +1885,7 @@
       if (profileResult.response.status === 401) throw new Error('Your credential was rejected. Sign in with a valid saved credential.');
       if (!profileResult.response.ok || !statsResult.response.ok || !matchesResult.response.ok) throw new Error('Player profile storage is temporarily unavailable. Try again.');
       state.profile = profileResult.data; state.profileStats = statsResult.data;
+      void initPresence();
       if (ratingsResult && ratingsResult.response.ok) {
         state.myRatings = ratingsResult.data;
       }
@@ -1925,6 +1931,94 @@
     }
     return data.live_ticket;
   }
+  function updatePresenceUI() {
+    Object.entries(state.friendPresence).forEach(([playerId, info]) => {
+      const tag = document.querySelector(`[data-presence-tag="${playerId}"]`);
+      const dot = document.querySelector(`[data-presence-dot="${playerId}"]`);
+      const lbl = document.querySelector(`[data-presence-label="${playerId}"]`);
+      if (tag && dot && lbl) {
+        const s = info?.status || 'offline';
+        const cls = (s === 'online' || s === 'in_lobby' || s === 'in_match') ? s : 'offline';
+        const text = s === 'online' ? 'Online' : s === 'in_lobby' ? 'In Lobby' : s === 'in_match' ? 'In Match' : 'Offline';
+        tag.className = `social-presence-tag ${cls}`;
+        dot.className = `social-presence-dot ${cls}`;
+        lbl.textContent = text;
+      }
+    });
+  }
+
+  async function initPresence() {
+    if (!state.profileCredential) return;
+    if (state.presenceWs && (state.presenceWs.readyState === WebSocket.OPEN || state.presenceWs.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    try {
+      const { response, data } = await playerApi('/api/presence/ticket', { method: 'POST' });
+      if (!response.ok || !data?.ticket) return;
+      const ticket = data.ticket;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/presence`;
+      const ws = new WebSocket(wsUrl);
+      state.presenceWs = ws;
+
+      ws.onopen = () => {
+        state.presenceReconnectDelay = 1000;
+        ws.send(JSON.stringify({ event: 'presence_auth', ticket }));
+        if (state.presenceHeartbeatTimer) clearInterval(state.presenceHeartbeatTimer);
+        state.presenceHeartbeatTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ event: 'ping' }));
+          }
+        }, 25000);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.event === 'presence_ready') {
+            (msg.snapshot || []).forEach(item => {
+              state.friendPresence[item.player_id] = { status: item.status, updated_at: item.updated_at };
+            });
+            updatePresenceUI();
+          } else if (msg.event === 'presence_update') {
+            state.friendPresence[msg.player_id] = { status: msg.status, updated_at: msg.updated_at };
+            updatePresenceUI();
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        if (state.presenceHeartbeatTimer) {
+          clearInterval(state.presenceHeartbeatTimer);
+          state.presenceHeartbeatTimer = null;
+        }
+        state.presenceWs = null;
+        if (state.profileCredential) {
+          if (state.presenceReconnectTimer) clearTimeout(state.presenceReconnectTimer);
+          const delay = Math.min(state.presenceReconnectDelay, 15000);
+          state.presenceReconnectDelay = delay * 2;
+          state.presenceReconnectTimer = setTimeout(initPresence, delay);
+        }
+      };
+    } catch {}
+  }
+
+  function closePresence() {
+    if (state.presenceHeartbeatTimer) {
+      clearInterval(state.presenceHeartbeatTimer);
+      state.presenceHeartbeatTimer = null;
+    }
+    if (state.presenceReconnectTimer) {
+      clearTimeout(state.presenceReconnectTimer);
+      state.presenceReconnectTimer = null;
+    }
+    if (state.presenceWs) {
+      try { state.presenceWs.close(); } catch {}
+      state.presenceWs = null;
+    }
+    state.friendPresence = {};
+  }
+
   async function refreshSocial(renderBeforeFetch = true) {
     if (!state.profileCredential) { render(); return; }
     state.socialLoading = true;
@@ -1937,7 +2031,14 @@
         playerApi('/api/friends/requests/outgoing'),
         playerApi('/api/blocks')
       ]);
-      if (friendsRes.response.ok) state.friendsList = friendsRes.data.friends || [];
+      if (friendsRes.response.ok) {
+        state.friendsList = friendsRes.data.friends || [];
+        state.friendsList.forEach(f => {
+          if (f.presence?.status && !state.friendPresence[f.player_id]) {
+            state.friendPresence[f.player_id] = { status: f.presence.status, updated_at: new Date().toISOString() };
+          }
+        });
+      }
       if (incomingRes.response.ok) state.incomingRequests = incomingRes.data.incoming_requests || [];
       if (outgoingRes.response.ok) state.outgoingRequests = outgoingRes.data.outgoing_requests || [];
       if (blockedRes.response.ok) state.blockedList = blockedRes.data.blocked || blockedRes.data.blocked_players || [];
@@ -1959,16 +2060,31 @@
         </div>
       `;
     }
-    const cards = state.friendsList.map(f => `
+    const cards = state.friendsList.map(f => {
+      const pInfo = state.friendPresence[f.player_id];
+      const pStatus = pInfo?.status || f.presence?.status || 'offline';
+      let dotClass = 'offline';
+      let label = 'Offline';
+      if (pStatus === 'online') {
+        dotClass = 'online';
+        label = 'Online';
+      } else if (pStatus === 'in_lobby') {
+        dotClass = 'in_lobby';
+        label = 'In Lobby';
+      } else if (pStatus === 'in_match') {
+        dotClass = 'in_match';
+        label = 'In Match';
+      }
+      return `
       <div class="social-card">
         <div class="social-card-user">
           <div class="social-avatar">${escapeHtml(initials(f.display_name || 'Player'))}</div>
           <div class="social-card-meta">
             <strong>${escapeHtml(f.display_name)}</strong>
-            <div class="social-rating-pill">⚡ ${f.global_rating} Elo</div>
-            <div class="social-presence-tag">
-              <span class="social-presence-dot"></span>
-              <span>Offline · Presence in Stage 9.2</span>
+            <div class="social-rating-pill">⚡ ${f.rating ?? f.global_rating} Elo</div>
+            <div class="social-presence-tag ${dotClass}" data-presence-tag="${f.player_id}">
+              <span class="social-presence-dot ${dotClass}" data-presence-dot="${f.player_id}" aria-hidden="true"></span>
+              <span class="social-presence-label" data-presence-label="${f.player_id}">${label}</span>
             </div>
           </div>
         </div>
@@ -1978,7 +2094,7 @@
           <button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${f.player_id}">Block</button>
         </div>
       </div>
-    `).join('');
+    `;}).join('');
     return `<div class="social-grid">${cards}</div>`;
   }
 
@@ -1987,13 +2103,13 @@
       ? (state.searchQuery ? `<div class="social-empty-state"><p>No players found matching "${escapeHtml(state.searchQuery)}".</p></div>` : '<div class="social-empty-state"><p>Enter a player display name or 32-character ID to search.</p></div>')
       : `<div class="social-grid">${state.playerSearchResults.map(p => {
           let actionBtn = '';
-          if (p.relationship_state === 'friend') {
+          if (p.relationship_state === 'friends' || p.relationship_state === 'friend') {
             actionBtn = '<span class="pill pill-success">✓ Friends</span>';
-          } else if (p.relationship_state === 'request_sent') {
+          } else if (p.relationship_state === 'outgoing_request' || p.relationship_state === 'request_sent') {
             actionBtn = '<span class="pill pill-warning">Request Pending</span>';
-          } else if (p.relationship_state === 'request_received') {
+          } else if (p.relationship_state === 'incoming_request' || p.relationship_state === 'request_received') {
             actionBtn = `<button class="btn btn-primary" type="button" data-action="social-tab" data-tab="requests">Respond</button>`;
-          } else if (p.relationship_state === 'blocked') {
+          } else if (p.relationship_state === 'blocked' || p.relationship_state === 'blocked_by') {
             actionBtn = '<span class="pill pill-danger">Blocked</span>';
           } else {
             actionBtn = `<button class="btn btn-primary" type="button" data-action="send-friend-request" data-recipient-id="${p.player_id}">Add Friend</button>`;
@@ -2101,17 +2217,17 @@
     const p = state.selectedPublicProfile;
     let relBadge = '';
     let relAction = '';
-    if (p.relationship_state === 'friend') {
+    if (p.relationship_state === 'friends' || p.relationship_state === 'friend') {
       relBadge = '<span class="pill pill-success">Friend</span>';
       relAction = `<button class="btn btn-secondary" type="button" data-action="remove-friend" data-friend-id="${p.player_id}">Remove Friend</button>`;
-    } else if (p.relationship_state === 'request_sent') {
+    } else if (p.relationship_state === 'outgoing_request' || p.relationship_state === 'request_sent') {
       relBadge = '<span class="pill pill-warning">Request Pending</span>';
-    } else if (p.relationship_state === 'request_received') {
+    } else if (p.relationship_state === 'incoming_request' || p.relationship_state === 'request_received') {
       relBadge = '<span class="pill pill-warning">Request Received</span>';
       relAction = `<button class="btn btn-primary" type="button" data-action="social-tab" data-tab="requests">Respond in Requests</button>`;
-    } else if (p.relationship_state === 'blocked') {
+    } else if (p.relationship_state === 'blocked' || p.relationship_state === 'blocked_by') {
       relBadge = '<span class="pill pill-danger">Blocked</span>';
-      relAction = `<button class="btn btn-secondary" type="button" data-action="unblock-player" data-player-id="${p.player_id}">Unblock</button>`;
+      relAction = p.relationship_state === 'blocked' ? `<button class="btn btn-secondary" type="button" data-action="unblock-player" data-player-id="${p.player_id}">Unblock</button>` : '';
     } else {
       relBadge = '<span class="pill pill-neutral">Not Connected</span>';
       relAction = `<button class="btn btn-primary" type="button" data-action="send-friend-request" data-recipient-id="${p.player_id}">Add Friend</button>`;
@@ -2166,7 +2282,7 @@
           </div>
           <div class="social-modal-actions">
             ${relAction}
-            ${p.relationship_state !== 'blocked' ? `<button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${p.player_id}">Block</button>` : ''}
+            ${p.relationship_state !== 'blocked' && p.relationship_state !== 'blocked_by' ? `<button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${p.player_id}">Block</button>` : ''}
             <button class="btn btn-secondary" type="button" data-action="close-public-profile">Close</button>
           </div>
         </div>
@@ -2384,6 +2500,7 @@
         render();
       } catch { notify('Clipboard access is unavailable. The credential remains stored for this tab; rotate it later if needed.'); }
     } else if (action === 'profile-logout') {
+      closePresence();
       sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
       state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
       state.myRatings = null; state.ratingHistory = []; state.ratingHistoryTotal = 0; state.ratingHistoryPage = 0;
@@ -2393,6 +2510,7 @@
       if (!window.confirm('Delete this pseudonymous profile? Credentials will be revoked and retained match records anonymized. This cannot be undone.')) return;
       const { response, data } = await playerApi('/api/player-profiles/me', { method: 'DELETE' });
       if (!response.ok) { state.profileNotice = data?.error?.message || 'Could not delete this profile.'; render(); return; }
+      closePresence();
       sessionStorage.removeItem(PLAYER_CREDENTIAL_KEY);
       state.profileCredential = ''; state.profile = null; state.profileStats = null; state.profileMatches = [];
       state.myRatings = null; state.ratingHistory = []; state.ratingHistoryTotal = 0; state.ratingHistoryPage = 0;
@@ -2989,7 +3107,7 @@
         notify(data.status === 'accepted' ? 'Reciprocal request: You are now friends!' : 'Friend request sent!');
         await refreshSocial(false);
         if (state.selectedPublicProfile && state.selectedPublicProfile.player_id === recipientId) {
-          state.selectedPublicProfile.relationship_state = data.status === 'accepted' ? 'friend' : 'request_sent';
+          state.selectedPublicProfile.relationship_state = data.status === 'accepted' ? 'friends' : 'outgoing_request';
         }
         if (state.searchQuery) {
           const q = state.searchQuery;
@@ -3129,5 +3247,6 @@
     else render();
   });
   setActiveNavigation();
+  if (state.profileCredential) void initPresence();
   connect();
 })();

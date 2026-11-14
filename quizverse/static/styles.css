@@ -225,7 +225,16 @@
 .social-card-meta span{color:#9b9cb8;font-size:.82rem}
 .social-rating-pill{display:inline-flex;align-items:center;gap:.3rem;background:#232541;color:#a3e7fc;padding:.2rem .55rem;border-radius:6px;font-weight:700;font-size:.8rem;margin-top:.2rem}
 .social-presence-tag{display:inline-flex;align-items:center;gap:.35rem;font-size:.76rem;color:#8587a6;margin-top:.25rem}
-.social-presence-dot{width:7px;height:7px;border-radius:50%;background:#666}
+.social-presence-dot{width:7px;height:7px;border-radius:50%;background:#64748b;display:inline-block;flex-shrink:0}
+.social-presence-dot.online{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,.7)}
+.social-presence-dot.in_lobby{background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,.7)}
+.social-presence-dot.in_match{background:#8b5cf6;box-shadow:0 0 6px rgba(139,92,246,.7)}
+.social-presence-dot.offline{background:#64748b}
+.social-presence-label{font-weight:600}
+.social-presence-tag.online .social-presence-label{color:#34d399}
+.social-presence-tag.in_lobby .social-presence-label{color:#fbbf24}
+.social-presence-tag.in_match .social-presence-label{color:#a78bfa}
+.social-presence-tag.offline .social-presence-label{color:#94a3b8}
 .social-card-actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
 .social-empty-state{text-align:center;padding:3rem 1.5rem;background:#131426;border:1px dashed #323554;border-radius:16px;color:#9b9cb8}
 .social-empty-state h3{color:#fff;margin:0 0 .5rem;font:700 1.2rem 'Space Grotesk',sans-serif}

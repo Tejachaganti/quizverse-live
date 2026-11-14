@@ -1745,3 +1745,45 @@ class GameEngine:
     async def room_codes(self) -> tuple[str, ...]:
         async with self._lock:
             return tuple(self._rooms)
+
+    async def get_player_activity(self, profile_id: str) -> str | None:
+        """Derive authoritative activity state (in_lobby, in_match) from server room state."""
+        async with self._lock:
+            for room in self._rooms.values():
+                for player in room.players.values():
+                    if player.profile_id == profile_id and player.connected:
+                        if room.phase in (
+                            Phase.COUNTDOWN,
+                            Phase.QUESTION,
+                            Phase.REVEAL,
+                            Phase.SUBMISSION,
+                            Phase.VOTING,
+                            Phase.ESCAPE_PUZZLE,
+                        ):
+                            return "in_match"
+                        elif room.phase in (Phase.WAITING, Phase.RESULTS):
+                            return "in_lobby"
+            return None
+
+    async def get_active_profiles_activity(self, profile_ids: set[str] | list[str]) -> dict[str, str]:
+        """Batch-query activity states for given player profile IDs."""
+        target_ids = set(profile_ids)
+        if not target_ids:
+            return {}
+        result: dict[str, str] = {}
+        async with self._lock:
+            for room in self._rooms.values():
+                for player in room.players.values():
+                    if player.profile_id in target_ids and player.connected:
+                        if room.phase in (
+                            Phase.COUNTDOWN,
+                            Phase.QUESTION,
+                            Phase.REVEAL,
+                            Phase.SUBMISSION,
+                            Phase.VOTING,
+                            Phase.ESCAPE_PUZZLE,
+                        ):
+                            result[player.profile_id] = "in_match"
+                        elif room.phase in (Phase.WAITING, Phase.RESULTS):
+                            result[player.profile_id] = "in_lobby"
+        return result

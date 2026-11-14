@@ -199,6 +199,8 @@ def install_social_api(
             raise ApiProblem(429, "rate_limited", "Too many actions. Please slow down.", headers={"Retry-After": str(retry_after)})
 
         removed = await asyncio.to_thread(friend_service.remove_friend, current_player_id, friend_id)
+        if removed and hasattr(request.app.state, "presence_service"):
+            await request.app.state.presence_service.notify_friendship_severed(current_player_id, friend_id)
         return {"removed": removed, "friend_id": friend_id}
 
     # 4. Player Blocking
@@ -222,7 +224,10 @@ def install_social_api(
             raise ApiProblem(429, "rate_limited", "Too many actions. Please slow down.", headers={"Retry-After": str(retry_after)})
 
         try:
-            return await asyncio.to_thread(block_service.block_player, current_player_id, body.target_id)
+            res = await asyncio.to_thread(block_service.block_player, current_player_id, body.target_id)
+            if hasattr(request.app.state, "presence_service"):
+                await request.app.state.presence_service.notify_friendship_severed(current_player_id, body.target_id)
+            return res
         except SocialError as err:
             raise ApiProblem(err.status_code, err.code, err.message) from err
 
