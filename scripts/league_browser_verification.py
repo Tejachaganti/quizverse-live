@@ -227,19 +227,30 @@ def _verify_league_lifecycle(browser, origin: str) -> None:
     expect(host_page.locator(".answer-button").first).to_be_visible(timeout=12000)
     expect(contender_page.locator(".answer-button").first).to_be_visible(timeout=12000)
 
-    # Play 5 questions
-    for _ in range(5):
-        prompt = host_page.locator(".question-text").inner_text()
-        question = next(item for item in QUESTIONS if item.prompt == prompt)
+    # Play questions until results appear
+    last_prompt = ""
+    for _ in range(15):
+        if host_page.locator(".results-card").is_visible():
+            break
+        if not host_page.locator(".question-text").is_visible():
+            time.sleep(0.5)
+            continue
+        prompt = host_page.locator(".question-text").inner_text().strip()
+        if not prompt or prompt == last_prompt:
+            time.sleep(0.5)
+            continue
+        question = next((item for item in QUESTIONS if item.prompt == prompt), None)
+        if question is None:
+            time.sleep(0.5)
+            continue
+        last_prompt = prompt
         correct_idx = question.answer
         wrong_idx = (correct_idx + 1) % len(question.options)
 
         host_page.locator(".answer-button").nth(correct_idx).click()
         contender_page.locator(".answer-button").nth(wrong_idx).click()
 
-        time.sleep(1.0)
-        if host_page.locator(".results-card").is_visible():
-            break
+        time.sleep(3.0)
 
     # Wait for results card
     expect(host_page.locator(".results-card")).to_be_visible(timeout=15000)

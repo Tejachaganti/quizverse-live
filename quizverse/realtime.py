@@ -58,6 +58,12 @@ from quizverse.persistence.competition import (
     HonorsService,
 )
 from quizverse.competition_api import install_competition_api
+from quizverse.persistence.social import (
+    BlockService,
+    FriendService,
+    PlayerDiscoveryService,
+)
+from quizverse.social_api import install_social_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -275,6 +281,9 @@ def create_app(
     stats_service = AdvancedStatsService(persistence)
     h2h_service = HeadToHeadService(persistence)
     honors_service = HonorsService(persistence)
+    block_service = BlockService(persistence)
+    friend_service = FriendService(persistence, block_service, match_history.rating_service)
+    discovery_service = PlayerDiscoveryService(persistence, friend_service, block_service, stats_service, honors_service)
 
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
     app.state.hub = hub
@@ -285,6 +294,9 @@ def create_app(
     app.state.advanced_stats_service = stats_service
     app.state.head_to_head_service = h2h_service
     app.state.honors_service = honors_service
+    app.state.block_service = block_service
+    app.state.friend_service = friend_service
+    app.state.discovery_service = discovery_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
@@ -293,6 +305,7 @@ def create_app(
     install_tournament_api(app, tournament_service, player_identities, active_engine)
     install_league_api(app, league_service, player_identities, active_engine)
     install_competition_api(app, stats_service, h2h_service, honors_service, player_identities)
+    install_social_api(app, discovery_service, friend_service, block_service, player_identities)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:

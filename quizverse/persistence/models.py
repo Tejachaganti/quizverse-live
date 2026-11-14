@@ -875,3 +875,73 @@ class SeasonFixtureTicket(Base):
     player: Mapped[PlayerProfile] = relationship()
 
 
+class Friendship(Base):
+    """Canonical bi-directional friendship between two authenticated player profiles.
+
+    Enforces canonical ordering (player_one_id < player_two_id) so each friendship is
+    represented by exactly one row with a unique pair constraint.
+    """
+
+    __tablename__ = "friendships"
+    __table_args__ = (
+        CheckConstraint("player_one_id < player_two_id", name="ck_friendship_canonical_order"),
+        UniqueConstraint("player_one_id", "player_two_id", name="uq_friendship_pair"),
+        Index("ix_friendships_p1", "player_one_id"),
+        Index("ix_friendships_p2", "player_two_id"),
+        Index("ix_friendships_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_one_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    player_two_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    player_one: Mapped[PlayerProfile] = relationship(foreign_keys=[player_one_id])
+    player_two: Mapped[PlayerProfile] = relationship(foreign_keys=[player_two_id])
+
+
+class FriendRequest(Base):
+    """A directional friend request from one player to another."""
+
+    __tablename__ = "friend_requests"
+    __table_args__ = (
+        CheckConstraint("sender_id != recipient_id", name="ck_friend_request_distinct"),
+        CheckConstraint("status IN ('pending', 'accepted', 'rejected', 'cancelled')", name="ck_friend_request_status"),
+        Index("ix_friend_requests_recipient_status", "recipient_id", "status"),
+        Index("ix_friend_requests_sender_status", "sender_id", "status"),
+        Index("ix_friend_requests_pair_status", "sender_id", "recipient_id", "status"),
+        Index("ix_friend_requests_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    sender_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    recipient_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    sender: Mapped[PlayerProfile] = relationship(foreign_keys=[sender_id])
+    recipient: Mapped[PlayerProfile] = relationship(foreign_keys=[recipient_id])
+
+
+class PlayerBlock(Base):
+    """A unilateral block relationship suppressing social interactions in both directions."""
+
+    __tablename__ = "player_blocks"
+    __table_args__ = (
+        CheckConstraint("blocker_id != blocked_id", name="ck_player_block_distinct"),
+        UniqueConstraint("blocker_id", "blocked_id", name="uq_player_block"),
+        Index("ix_player_blocks_blocker", "blocker_id"),
+        Index("ix_player_blocks_blocked", "blocked_id"),
+        Index("ix_player_blocks_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    blocker_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    blocked_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    blocker: Mapped[PlayerProfile] = relationship(foreign_keys=[blocker_id])
+    blocked: Mapped[PlayerProfile] = relationship(foreign_keys=[blocked_id])
+
+

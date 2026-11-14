@@ -200,3 +200,53 @@
   .league-detail-banner{grid-template-columns:1fr}
   .leagues-header{flex-direction:column;align-items:flex-start}
 }
+
+/* ==========================================================================
+   Stage 9.1: Social Foundation & Player Friendships
+   ========================================================================== */
+.social-shell{max-width:960px;margin:0 auto;padding:1.5rem 1rem;display:grid;gap:1.5rem}
+.social-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem}
+.social-header h1{margin:0;font:800 1.8rem 'Space Grotesk',sans-serif;color:#fff}
+.social-header p{margin:.25rem 0 0;color:#9b9cb8;font-size:.9rem}
+.social-nav{display:flex;gap:.5rem;border-bottom:1px solid #2d304e;padding-bottom:.75rem;flex-wrap:wrap}
+.social-tab-btn{background:transparent;border:1px solid transparent;color:#9b9cb8;padding:.5rem 1rem;border-radius:10px;font-weight:600;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:.4rem;transition:all .15s ease}
+.social-tab-btn:hover{color:#fff;background:rgba(255,255,255,.05)}
+.social-tab-btn.active{color:#fff;background:#2d304e;border-color:#525680}
+.social-badge{display:inline-flex;align-items:center;justify-content:center;background:#ff4d6d;color:#fff;font-size:.75rem;font-weight:700;padding:.15rem .45rem;border-radius:999px;line-height:1}
+.social-count{background:rgba(255,255,255,.1);color:#c1c3e2;font-size:.75rem;padding:.15rem .45rem;border-radius:999px}
+.social-search-bar{display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap}
+.social-search-bar input{flex:1;min-width:220px;padding:.65rem 1rem;background:#141527;border:1px solid #383a55;border-radius:10px;color:#fff;font-size:.92rem}
+.social-search-bar input:focus{border-color:#7c5cff;outline:none}
+.social-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem}
+.social-card{background:linear-gradient(145deg,#191b31,#131426);border:1px solid #2d304e;border-radius:14px;padding:1.15rem;display:flex;flex-direction:column;justify-content:space-between;gap:1rem;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+.social-card-user{display:flex;align-items:center;gap:.85rem}
+.social-avatar{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,#6f42c1,#4361ee);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.15rem;flex-shrink:0;box-shadow:0 2px 8px rgba(67,97,238,.3)}
+.social-card-meta strong{display:block;color:#fff;font:700 1.05rem 'Space Grotesk',sans-serif}
+.social-card-meta span{color:#9b9cb8;font-size:.82rem}
+.social-rating-pill{display:inline-flex;align-items:center;gap:.3rem;background:#232541;color:#a3e7fc;padding:.2rem .55rem;border-radius:6px;font-weight:700;font-size:.8rem;margin-top:.2rem}
+.social-presence-tag{display:inline-flex;align-items:center;gap:.35rem;font-size:.76rem;color:#8587a6;margin-top:.25rem}
+.social-presence-dot{width:7px;height:7px;border-radius:50%;background:#666}
+.social-card-actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.social-empty-state{text-align:center;padding:3rem 1.5rem;background:#131426;border:1px dashed #323554;border-radius:16px;color:#9b9cb8}
+.social-empty-state h3{color:#fff;margin:0 0 .5rem;font:700 1.2rem 'Space Grotesk',sans-serif}
+.social-empty-state p{margin:0 0 1rem;font-size:.9rem}
+.social-req-group-title{color:#fff;font:700 1.1rem 'Space Grotesk',sans-serif;margin:1.2rem 0 .6rem;display:flex;align-items:center;gap:.5rem}
+.social-modal-backdrop{position:fixed;inset:0;background:rgba(8,10,24,.85);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:999;padding:1rem}
+.social-modal{width:min(560px,100%);max-height:90vh;overflow-y:auto;border:1px solid rgba(170,161,255,.35);border-radius:20px;background:linear-gradient(145deg,rgba(26,25,48,.98),rgba(14,16,30,.98));padding:1.5rem;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.social-modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.2rem;border-bottom:1px solid #2d304e;padding-bottom:.8rem}
+.social-modal-header h2{margin:0;font:700 1.35rem 'Space Grotesk',sans-serif;color:#fff}
+.social-modal-body{display:grid;gap:1.2rem}
+.social-stats-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.6rem;text-align:center}
+.social-stats-cell{padding:.75rem .5rem;border:1px solid #323554;border-radius:10px;background:#141527}
+.social-stats-cell strong{display:block;font:700 1.25rem 'Space Grotesk',sans-serif;color:#a3e7fc}
+.social-stats-cell span{font-size:.74rem;color:#9b9cb8}
+.social-modal-actions{display:flex;gap:.6rem;flex-wrap:wrap;justify-content:flex-end;margin-top:1.2rem;border-top:1px solid #2d304e;padding-top:1rem}
+
+@media(max-width:960px){
+  header.topbar{padding:0 12px !important}
+  header .primary-navigation{gap:3px !important;margin-left:auto !important;margin-right:8px !important;padding:3px !important}
+  header .nav-link{min-height:34px !important;padding:0 7px !important;font-size:11px !important}
+}
+@media(max-width:768px){
+  header .primary-navigation{overflow-x:auto !important;max-width:100% !important;scrollbar-width:none !important}
+}

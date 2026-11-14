@@ -96,6 +96,17 @@
     h2hOpponentId: '',
     h2hOpponentName: '',
     h2hError: '',
+    socialTab: 'friends',
+    friendsList: [],
+    incomingRequests: [],
+    outgoingRequests: [],
+    blockedList: [],
+    playerSearchResults: [],
+    searchQuery: '',
+    socialLoading: false,
+    socialNotice: '',
+    selectedPublicProfile: null,
+    publicProfileLoading: false,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -1914,8 +1925,334 @@
     }
     return data.live_ticket;
   }
+  async function refreshSocial(renderBeforeFetch = true) {
+    if (!state.profileCredential) { render(); return; }
+    state.socialLoading = true;
+    state.socialNotice = '';
+    if (renderBeforeFetch) render();
+    try {
+      const [friendsRes, incomingRes, outgoingRes, blockedRes] = await Promise.all([
+        playerApi('/api/friends'),
+        playerApi('/api/friends/requests/incoming'),
+        playerApi('/api/friends/requests/outgoing'),
+        playerApi('/api/blocks')
+      ]);
+      if (friendsRes.response.ok) state.friendsList = friendsRes.data.friends || [];
+      if (incomingRes.response.ok) state.incomingRequests = incomingRes.data.incoming_requests || [];
+      if (outgoingRes.response.ok) state.outgoingRequests = outgoingRes.data.outgoing_requests || [];
+      if (blockedRes.response.ok) state.blockedList = blockedRes.data.blocked || blockedRes.data.blocked_players || [];
+    } catch (err) {
+      state.socialNotice = err.message || 'Could not load social data.';
+    } finally {
+      state.socialLoading = false;
+      render();
+    }
+  }
+
+  function renderFriendsTab() {
+    if (state.friendsList.length === 0) {
+      return `
+        <div class="social-empty-state">
+          <h3>No Friends Yet</h3>
+          <p>Your friends list is currently empty. Search for fellow quiz competitors to add them!</p>
+          <button class="btn btn-primary" type="button" data-action="social-tab" data-tab="search">Find Players</button>
+        </div>
+      `;
+    }
+    const cards = state.friendsList.map(f => `
+      <div class="social-card">
+        <div class="social-card-user">
+          <div class="social-avatar">${escapeHtml(initials(f.display_name || 'Player'))}</div>
+          <div class="social-card-meta">
+            <strong>${escapeHtml(f.display_name)}</strong>
+            <div class="social-rating-pill">⚡ ${f.global_rating} Elo</div>
+            <div class="social-presence-tag">
+              <span class="social-presence-dot"></span>
+              <span>Offline · Presence in Stage 9.2</span>
+            </div>
+          </div>
+        </div>
+        <div class="social-card-actions">
+          <button class="btn btn-secondary" type="button" data-action="view-public-profile" data-player-id="${f.player_id}">View Profile</button>
+          <button class="btn btn-secondary" type="button" data-action="remove-friend" data-friend-id="${f.player_id}">Remove</button>
+          <button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${f.player_id}">Block</button>
+        </div>
+      </div>
+    `).join('');
+    return `<div class="social-grid">${cards}</div>`;
+  }
+
+  function renderSearchTab() {
+    const resultsHtml = state.playerSearchResults.length === 0
+      ? (state.searchQuery ? `<div class="social-empty-state"><p>No players found matching "${escapeHtml(state.searchQuery)}".</p></div>` : '<div class="social-empty-state"><p>Enter a player display name or 32-character ID to search.</p></div>')
+      : `<div class="social-grid">${state.playerSearchResults.map(p => {
+          let actionBtn = '';
+          if (p.relationship_state === 'friend') {
+            actionBtn = '<span class="pill pill-success">✓ Friends</span>';
+          } else if (p.relationship_state === 'request_sent') {
+            actionBtn = '<span class="pill pill-warning">Request Pending</span>';
+          } else if (p.relationship_state === 'request_received') {
+            actionBtn = `<button class="btn btn-primary" type="button" data-action="social-tab" data-tab="requests">Respond</button>`;
+          } else if (p.relationship_state === 'blocked') {
+            actionBtn = '<span class="pill pill-danger">Blocked</span>';
+          } else {
+            actionBtn = `<button class="btn btn-primary" type="button" data-action="send-friend-request" data-recipient-id="${p.player_id}">Add Friend</button>`;
+          }
+          return `
+            <div class="social-card">
+              <div class="social-card-user">
+                <div class="social-avatar">${escapeHtml(initials(p.display_name || 'Player'))}</div>
+                <div class="social-card-meta">
+                  <strong>${escapeHtml(p.display_name)}</strong>
+                  <div class="social-rating-pill">⚡ ${p.rating} Elo ${p.is_provisional ? '(Prov)' : ''}</div>
+                  <span>Win Rate: ${p.win_percentage}% · ${p.total_matches} matches</span>
+                </div>
+              </div>
+              <div class="social-card-actions">
+                ${actionBtn}
+                <button class="btn btn-secondary" type="button" data-action="view-public-profile" data-player-id="${p.player_id}">View Profile</button>
+              </div>
+            </div>
+          `;
+        }).join('')}</div>`;
+
+    return `
+      <div class="social-search-bar">
+        <input id="player-search-input" type="search" placeholder="Search by display name or player ID (min 2 chars)..." value="${escapeHtml(state.searchQuery)}">
+        <button class="btn btn-primary" type="button" data-action="exec-player-search">Search</button>
+      </div>
+      ${resultsHtml}
+    `;
+  }
+
+  function renderRequestsTab() {
+    const incomingCards = state.incomingRequests.length === 0
+      ? '<div class="social-empty-state"><p>No incoming friend requests.</p></div>'
+      : `<div class="social-grid">${state.incomingRequests.map(r => {
+          const sName = r.sender_display_name || r.sender_name || 'Player';
+          return `
+          <div class="social-card">
+            <div class="social-card-user">
+              <div class="social-avatar">${escapeHtml(initials(sName))}</div>
+              <div class="social-card-meta">
+                <strong>${escapeHtml(sName)}</strong>
+                <div class="social-rating-pill">⚡ ${r.sender_rating} Elo</div>
+                <span>Received ${new Date(r.created_at).toLocaleDateString()}</span>
+              </div>
+            </div>
+            <div class="social-card-actions">
+              <button class="btn btn-primary" type="button" data-action="accept-request" data-request-id="${r.request_id}">Accept</button>
+              <button class="btn btn-secondary" type="button" data-action="reject-request" data-request-id="${r.request_id}">Reject</button>
+              <button class="btn btn-secondary" type="button" data-action="view-public-profile" data-player-id="${r.sender_id}">View Profile</button>
+            </div>
+          </div>
+        `;}).join('')}</div>`;
+
+    const outgoingCards = state.outgoingRequests.length === 0
+      ? '<div class="social-empty-state"><p>No pending outgoing friend requests.</p></div>'
+      : `<div class="social-grid">${state.outgoingRequests.map(r => {
+          const rName = r.recipient_display_name || r.recipient_name || 'Player';
+          return `
+          <div class="social-card">
+            <div class="social-card-user">
+              <div class="social-avatar">${escapeHtml(initials(rName))}</div>
+              <div class="social-card-meta">
+                <strong>${escapeHtml(rName)}</strong>
+                <div class="social-rating-pill">⚡ ${r.recipient_rating} Elo</div>
+                <span>Sent ${new Date(r.created_at).toLocaleDateString()}</span>
+              </div>
+            </div>
+            <div class="social-card-actions">
+              <button class="btn btn-secondary" type="button" data-action="cancel-request" data-request-id="${r.request_id}">Cancel Request</button>
+              <button class="btn btn-secondary" type="button" data-action="view-public-profile" data-player-id="${r.recipient_id}">View Profile</button>
+            </div>
+          </div>
+        `;}).join('')}</div>`;
+
+    return `
+      <h3 class="social-req-group-title">Incoming Requests (${state.incomingRequests.length})</h3>
+      ${incomingCards}
+      <h3 class="social-req-group-title" style="margin-top:2rem">Outgoing Requests (${state.outgoingRequests.length})</h3>
+      ${outgoingCards}
+    `;
+  }
+
+  function renderBlockedTab() {
+    if (state.blockedList.length === 0) {
+      return '<div class="social-empty-state"><p>No blocked players.</p></div>';
+    }
+    return `<div class="social-grid">${state.blockedList.map(b => `
+      <div class="social-card">
+        <div class="social-card-user">
+          <div class="social-avatar">${escapeHtml(initials(b.display_name || 'Player'))}</div>
+          <div class="social-card-meta">
+            <strong>${escapeHtml(b.display_name)}</strong>
+            <span>Blocked on ${new Date(b.created_at).toLocaleDateString()}</span>
+          </div>
+        </div>
+        <div class="social-card-actions">
+          <button class="btn btn-secondary" type="button" data-action="unblock-player" data-player-id="${b.player_id}">Unblock</button>
+        </div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function renderPublicProfileModal() {
+    const p = state.selectedPublicProfile;
+    let relBadge = '';
+    let relAction = '';
+    if (p.relationship_state === 'friend') {
+      relBadge = '<span class="pill pill-success">Friend</span>';
+      relAction = `<button class="btn btn-secondary" type="button" data-action="remove-friend" data-friend-id="${p.player_id}">Remove Friend</button>`;
+    } else if (p.relationship_state === 'request_sent') {
+      relBadge = '<span class="pill pill-warning">Request Pending</span>';
+    } else if (p.relationship_state === 'request_received') {
+      relBadge = '<span class="pill pill-warning">Request Received</span>';
+      relAction = `<button class="btn btn-primary" type="button" data-action="social-tab" data-tab="requests">Respond in Requests</button>`;
+    } else if (p.relationship_state === 'blocked') {
+      relBadge = '<span class="pill pill-danger">Blocked</span>';
+      relAction = `<button class="btn btn-secondary" type="button" data-action="unblock-player" data-player-id="${p.player_id}">Unblock</button>`;
+    } else {
+      relBadge = '<span class="pill pill-neutral">Not Connected</span>';
+      relAction = `<button class="btn btn-primary" type="button" data-action="send-friend-request" data-recipient-id="${p.player_id}">Add Friend</button>`;
+    }
+
+    const trophies = p.honors_summary?.trophies || [];
+    const trophiesHtml = trophies.length > 0
+      ? `<div class="trophies-grid" style="margin-top:.5rem">${trophies.map(t => `
+          <div class="trophy-card tier-${t.tier}">
+            <div class="trophy-badge">${escapeHtml(t.badge_label || t.tier)}</div>
+            <p class="trophy-title">${escapeHtml(t.title)}</p>
+            <div class="trophy-meta">${escapeHtml(t.subtitle)}</div>
+          </div>
+        `).join('')}</div>`
+      : '<p style="color:#8e90ab;font-size:.85rem;margin:.5rem 0 0">No competitive trophies earned yet.</p>';
+
+    return `
+      <div class="social-modal-backdrop" data-action="close-public-profile">
+        <div class="social-modal" onclick="event.stopPropagation()">
+          <div class="social-modal-header">
+            <div style="display:flex;align-items:center;gap:.75rem">
+              <div class="social-avatar">${escapeHtml(initials(p.display_name || 'Player'))}</div>
+              <div>
+                <h2>${escapeHtml(p.display_name)}</h2>
+                <div style="display:flex;align-items:center;gap:.5rem;margin-top:.25rem">
+                  <span style="font-size:.8rem;color:#8e90ab">ID: ${escapeHtml(p.player_id)}</span>
+                  ${relBadge}
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-secondary" type="button" data-action="close-public-profile">✕</button>
+          </div>
+          <div class="social-modal-body">
+            <div class="social-stats-row">
+              <div class="social-stats-cell">
+                <strong>${p.rating}</strong>
+                <span>Global Elo ${p.is_provisional ? '(Prov)' : ''}</span>
+              </div>
+              <div class="social-stats-cell">
+                <strong>${p.win_percentage}%</strong>
+                <span>Win Rate</span>
+              </div>
+              <div class="social-stats-cell">
+                <strong>${p.total_matches}</strong>
+                <span>Matches (${p.wins}W / ${p.losses}L / ${p.draws}D)</span>
+              </div>
+            </div>
+            <div>
+              <strong style="display:block;color:#fff;margin-bottom:.4rem;font-size:.95rem">Trophies &amp; Honors</strong>
+              ${trophiesHtml}
+            </div>
+          </div>
+          <div class="social-modal-actions">
+            ${relAction}
+            ${p.relationship_state !== 'blocked' ? `<button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${p.player_id}">Block</button>` : ''}
+            <button class="btn btn-secondary" type="button" data-action="close-public-profile">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function socialScreen() {
+    app.classList.remove('library-shell');
+    if (!state.profileCredential) {
+      app.innerHTML = `
+        <div class="social-shell">
+          <div class="social-header">
+            <div>
+              <h1>Social Hub</h1>
+              <p>Connect with players, manage friendships, and build your competitive circle.</p>
+            </div>
+          </div>
+          <div class="social-empty-state">
+            <h3>Player Profile Required</h3>
+            <p>You need an active Player Profile to discover friends, send requests, and build your social circle.</p>
+            <button class="btn btn-primary" type="button" data-action="nav-profile">Go to Player Profile</button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const unreadRequests = state.incomingRequests.length;
+    const navHtml = `
+      <div class="social-nav" role="tablist">
+        <button class="social-tab-btn ${state.socialTab === 'friends' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="friends" role="tab" aria-selected="${state.socialTab === 'friends'}">
+          Friends <span class="social-count">${state.friendsList.length}</span>
+        </button>
+        <button class="social-tab-btn ${state.socialTab === 'search' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="search" role="tab" aria-selected="${state.socialTab === 'search'}">
+          Find Players
+        </button>
+        <button class="social-tab-btn ${state.socialTab === 'requests' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="requests" role="tab" aria-selected="${state.socialTab === 'requests'}">
+          Requests ${unreadRequests > 0 ? `<span class="social-badge">${unreadRequests}</span>` : ''}
+        </button>
+        <button class="social-tab-btn ${state.socialTab === 'blocked' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="blocked" role="tab" aria-selected="${state.socialTab === 'blocked'}">
+          Blocked <span class="social-count">${state.blockedList.length}</span>
+        </button>
+      </div>
+    `;
+
+    let bodyHtml = '';
+    if (state.socialLoading && !state.friendsList.length && !state.playerSearchResults.length) {
+      bodyHtml = '<div class="loading-state"><span class="loader"></span><p>Loading social data…</p></div>';
+    } else if (state.socialTab === 'friends') {
+      bodyHtml = renderFriendsTab();
+    } else if (state.socialTab === 'search') {
+      bodyHtml = renderSearchTab();
+    } else if (state.socialTab === 'requests') {
+      bodyHtml = renderRequestsTab();
+    } else if (state.socialTab === 'blocked') {
+      bodyHtml = renderBlockedTab();
+    }
+
+    const modalHtml = state.selectedPublicProfile ? renderPublicProfileModal() : '';
+
+    app.innerHTML = `
+      <div class="social-shell">
+        <div class="social-header">
+          <div>
+            <h1>Social Hub</h1>
+            <p>Connect with players, manage friendships, and build your competitive circle.</p>
+          </div>
+          <button class="btn btn-secondary" type="button" data-action="refresh-social-hub">↻ Refresh</button>
+        </div>
+        ${navHtml}
+        ${state.socialNotice ? `<p class="library-message" role="status">${escapeHtml(state.socialNotice)}</p>` : ''}
+        <div class="social-tab-content">
+          ${bodyHtml}
+        </div>
+        ${modalHtml}
+      </div>
+    `;
+  }
+
   function render() {
     if (state.tick) clearInterval(state.tick);
+    if (state.view === 'social') {
+      socialScreen();
+      return;
+    }
     if (state.view === 'leagues') {
       leaguesScreen();
       return;
@@ -2608,10 +2945,144 @@
         render();
       } catch (err) { notify(err.message); }
     }
+    else if (action === 'nav-profile') {
+      state.view = 'profile';
+      state.screen = '';
+      setActiveNavigation();
+      void refreshProfile();
+    }
+    else if (action === 'refresh-social-hub') {
+      void refreshSocial();
+    }
+    else if (action === 'social-tab') {
+      state.socialTab = target.dataset.tab;
+      render();
+    }
+    else if (action === 'exec-player-search') {
+      const query = document.querySelector('#player-search-input')?.value.trim() || '';
+      state.searchQuery = query;
+      if (query.length < 2) {
+        notify('Search query must be at least 2 characters.');
+        return;
+      }
+      state.socialLoading = true;
+      render();
+      try {
+        const { response, data } = await playerApi(`/api/players/search?query=${encodeURIComponent(query)}&limit=20`);
+        if (!response.ok) throw new Error(data?.error?.message || 'Search failed.');
+        state.playerSearchResults = data.results || [];
+      } catch (err) {
+        notify(err.message);
+      } finally {
+        state.socialLoading = false;
+        render();
+      }
+    }
+    else if (action === 'send-friend-request') {
+      const recipientId = target.dataset.recipientId;
+      try {
+        const { response, data } = await playerApi('/api/friends/requests', {
+          method: 'POST',
+          body: JSON.stringify({ recipient_id: recipientId })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not send friend request.');
+        notify(data.status === 'accepted' ? 'Reciprocal request: You are now friends!' : 'Friend request sent!');
+        await refreshSocial(false);
+        if (state.selectedPublicProfile && state.selectedPublicProfile.player_id === recipientId) {
+          state.selectedPublicProfile.relationship_state = data.status === 'accepted' ? 'friend' : 'request_sent';
+        }
+        if (state.searchQuery) {
+          const q = state.searchQuery;
+          const { response: sRes, data: sData } = await playerApi(`/api/players/search?query=${encodeURIComponent(q)}&limit=20`);
+          if (sRes.ok) state.playerSearchResults = sData.results || [];
+        }
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'accept-request') {
+      const reqId = target.dataset.requestId;
+      try {
+        const { response, data } = await playerApi(`/api/friends/requests/${reqId}/accept`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not accept request.');
+        notify('Friend request accepted!');
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'reject-request') {
+      const reqId = target.dataset.requestId;
+      try {
+        const { response, data } = await playerApi(`/api/friends/requests/${reqId}/reject`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not reject request.');
+        notify('Friend request rejected.');
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'cancel-request') {
+      const reqId = target.dataset.requestId;
+      try {
+        const { response, data } = await playerApi(`/api/friends/requests/${reqId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not cancel request.');
+        notify('Friend request cancelled.');
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'remove-friend') {
+      const friendId = target.dataset.friendId;
+      try {
+        const { response, data } = await playerApi(`/api/friends/${friendId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not remove friend.');
+        notify('Friend removed.');
+        if (state.selectedPublicProfile && state.selectedPublicProfile.player_id === friendId) {
+          state.selectedPublicProfile.relationship_state = 'none';
+        }
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'block-player') {
+      const playerId = target.dataset.playerId;
+      try {
+        const { response, data } = await playerApi('/api/blocks', {
+          method: 'POST',
+          body: JSON.stringify({ target_id: playerId })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not block player.');
+        notify('Player blocked.');
+        if (state.selectedPublicProfile && state.selectedPublicProfile.player_id === playerId) {
+          state.selectedPublicProfile = null;
+        }
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'unblock-player') {
+      const playerId = target.dataset.playerId;
+      try {
+        const { response, data } = await playerApi(`/api/blocks/${playerId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not unblock player.');
+        notify('Player unblocked.');
+        if (state.selectedPublicProfile && state.selectedPublicProfile.player_id === playerId) {
+          state.selectedPublicProfile.relationship_state = 'none';
+        }
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'view-public-profile') {
+      const playerId = target.dataset.playerId;
+      try {
+        const { response, data } = await playerApi(`/api/players/${playerId}/public-profile`);
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not load public profile.');
+        state.selectedPublicProfile = data;
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'close-public-profile') {
+      state.selectedPublicProfile = null;
+      render();
+    }
   });
   app.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.target.id === 'room-code') document.querySelector('[data-action="confirm-join"]')?.click();
     if (event.key === 'Enter' && event.target.id === 'player-name') document.querySelector('[data-action="create"]')?.click();
+    if (event.key === 'Enter' && event.target.id === 'player-search-input') document.querySelector('[data-action="exec-player-search"]')?.click();
   });
   app.addEventListener('change', event => {
     if (event.target.id === 'rating-history-scope') {
@@ -2654,6 +3125,7 @@
     else if (state.view === 'rankings') void refreshRankings();
     else if (state.view === 'tournaments') void refreshTournaments();
     else if (state.view === 'leagues') void refreshLeagues();
+    else if (state.view === 'social') void refreshSocial();
     else render();
   });
   setActiveNavigation();
