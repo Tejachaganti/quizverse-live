@@ -632,7 +632,7 @@ class TournamentService:
             return joined
         else:
             # Second player joins the room
-            joined = await engine.join_room(room_code, player_name, profile_id=player_id)
+            joined = await engine.join_room(room_code, player_name, profile_id=player_id, is_fixture_admission=True)
             # Transition match to in_progress in DB
             with self._database.sessions.begin() as session:
                 m = session.get(TournamentMatch, match_id)

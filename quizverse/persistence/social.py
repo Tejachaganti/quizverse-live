@@ -85,18 +85,19 @@ class BlockService:
                 )
                 .values(status="cancelled", updated_at=now)
             )
+            target_name = target.display_name
 
-            if self.on_friendship_severed is not None:
-                try:
-                    self.on_friendship_severed(blocker_id, target_id)
-                except Exception:
-                    pass
+        if self.on_friendship_severed is not None:
+            try:
+                self.on_friendship_severed(blocker_id, target_id)
+            except Exception:
+                pass
 
-            return {
-                "blocked_id": target_id,
-                "display_name": target.display_name,
-                "created_at": now,
-            }
+        return {
+            "blocked_id": target_id,
+            "display_name": target_name,
+            "created_at": now,
+        }
 
     def unblock_player(self, blocker_id: str, target_id: str) -> bool:
         with self._database.sessions.begin() as session:

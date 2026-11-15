@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import inspect
 import json
 import re
 import secrets
@@ -122,6 +123,8 @@ class Room:
     elimination_end_reason: str | None = None
     terminal_elimination_round: int | None = None
     selection: dict[str, object] = field(default_factory=dict)
+    access_policy: str = "public"
+    authorized_profile_ids: set[str] = field(default_factory=set)
     bluff_submissions: dict[str, str] = field(default_factory=dict)
     bluff_options: list[dict[str, object]] = field(default_factory=list)
     bluff_votes: dict[str, str] = field(default_factory=dict)
@@ -671,6 +674,7 @@ class GameEngine:
                 "exam_collection_id": room.selection.get("exam_collection_id"),
             },
             "phase": room.phase.value,
+            "access_policy": room.access_policy,
             **({"match_history": {
                 "status": room.completion_status if any(player.profile_id for player in room.players.values()) else "not_linked",
                 "attempts": room.completion_attempts,
@@ -772,7 +776,7 @@ class GameEngine:
 
     async def create_room(
         self, raw_name: object, mode: object = "classic", selection: dict[str, object] | None = None,
-        *, profile_id: str | None = None,
+        *, profile_id: str | None = None, access_policy: str | None = None,
     ) -> dict[str, object]:
         name = self.validate_name(raw_name)
         try:
@@ -793,6 +797,11 @@ class GameEngine:
             if (match_config.bluff_master or match_config.escape_room) and question_count != 10:
                 raise GameError("invalid_question_count", "Bluff Master and Escape Room use exactly ten rounds or puzzles.")
             configured = match_config if question_count == match_config.question_count else replace(match_config, question_count=question_count)
+            policy = access_policy or str(chosen.get("access_policy") or "public")
+            if chosen.get("tournament_id") or chosen.get("league_id"):
+                policy = "official_fixture"
+            elif chosen.get("is_private") or chosen.get("access_policy") == "invite_only":
+                policy = "invite_only"
             room = Room(
                 code=code,
                 host_id=player_id,
@@ -800,14 +809,27 @@ class GameEngine:
                 last_activity=now,
                 match_config=configured,
                 selection=chosen,
+                access_policy=policy,
             )
+            if profile_id:
+                room.authorized_profile_ids.add(profile_id)
             player = Player(id=player_id, name=name, token_hash=self._token_hash(token), profile_id=profile_id)
             room.players[player_id] = player
             self._rooms[code] = room
             self._sessions[player.token_hash] = (code, player_id)
             return self._joined(room, player, token)
 
-    async def join_room(self, raw_code: object, raw_name: object, *, profile_id: str | None = None) -> dict[str, object]:
+    async def join_room(
+        self,
+        raw_code: object,
+        raw_name: object,
+        *,
+        profile_id: str | None = None,
+        is_fixture_admission: bool = False,
+        is_invitation_admission: bool = False,
+        admission_ticket: str | None = None,
+        ticket_validator: Any | None = None,
+    ) -> dict[str, object]:
         name = self.validate_name(raw_name)
         if not isinstance(raw_code, str) or not re.fullmatch(r"[A-HJ-NP-Z2-9]{6}", raw_code.strip().upper()):
             raise GameError("invalid_code", "Room codes use six letters or numbers, excluding ambiguous characters.")
@@ -816,6 +838,23 @@ class GameEngine:
             room = self._rooms.get(code)
             if room is None:
                 raise GameError("room_not_found", "Room not found. Check the code or create a new arena.")
+            if (room.selection.get("tournament_id") or room.selection.get("league_id") or room.access_policy == "official_fixture") and not is_fixture_admission:
+                raise GameError("official_fixture_restricted", "This arena is an official fixture. Join through tournament/league admission.")
+            if room.access_policy == "invite_only" and not is_invitation_admission:
+                if admission_ticket is not None and ticket_validator is not None:
+                    valid = False
+                    try:
+                        valid = ticket_validator(code, profile_id or "", admission_ticket)
+                        if inspect.isawaitable(valid):
+                            valid = await valid
+                    except Exception:
+                        valid = False
+                    if not valid:
+                        raise GameError("invalid_admission_ticket", "The admission ticket is invalid, expired, or has already been used.")
+                elif profile_id is not None and profile_id in room.authorized_profile_ids:
+                    pass
+                else:
+                    raise GameError("invitation_required", "This arena is private and requires an invitation admission ticket.")
             if room.phase != Phase.WAITING:
                 raise GameError("game_started", "This game has already started.")
             if len(room.players) >= room.match_config.max_players:
@@ -1787,3 +1826,27 @@ class GameEngine:
                         elif room.phase in (Phase.WAITING, Phase.RESULTS):
                             result[player.profile_id] = "in_lobby"
         return result
+
+    async def get_room_metadata(self, code: str) -> dict[str, Any] | None:
+        """Return server-authoritative room metadata for invitation and challenge validation."""
+        async with self._lock:
+            room = self._rooms.get(code.strip().upper())
+            if room is None:
+                return None
+            host_player = room.players.get(room.host_id)
+            return {
+                "code": room.code,
+                "host_id": room.host_id,
+                "host_profile_id": host_player.profile_id if host_player else None,
+                "host_name": host_player.name if host_player else "Host",
+                "member_profile_ids": {
+                    p.profile_id for p in room.players.values() if p.profile_id and p.connected
+                },
+                "phase": room.phase.value,
+                "mode": room.match_config.mode.value,
+                "current_players": len(room.players),
+                "max_players": room.match_config.max_players,
+                "access_policy": room.access_policy,
+                "is_full": len(room.players) >= room.match_config.max_players,
+                "is_waiting": room.phase == Phase.WAITING,
+            }

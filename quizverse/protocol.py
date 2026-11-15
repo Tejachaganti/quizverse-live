@@ -27,6 +27,7 @@ class CreateEvent(EventModel):
     quiz_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(default_factory=list, max_length=20)
     library_capability: str | None = Field(default=None, min_length=40, max_length=128)
     exam_collection_id: str | None = Field(default=None, min_length=1, max_length=128)
+    access_policy: Literal["public", "invite_only"] = "public"
 
     @model_validator(mode="after")
     def valid_selection(self):
@@ -51,6 +52,7 @@ class JoinEvent(EventModel):
     name: str = Field(min_length=1, max_length=18)
     code: str = Field(min_length=6, max_length=6)
     identity_ticket: str | None = Field(default=None, min_length=40, max_length=128)
+    admission_ticket: str | None = Field(default=None, min_length=20, max_length=128)
 
 
 class ReconnectEvent(EventModel):

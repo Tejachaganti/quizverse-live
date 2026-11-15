@@ -984,7 +984,7 @@ class LeagueService:
                     f.status = "in_progress"
             return joined
         else:
-            joined = await engine.join_room(room_code, player_name, profile_id=player_id)
+            joined = await engine.join_room(room_code, player_name, profile_id=player_id, is_fixture_admission=True)
             with self._database.sessions.begin() as session:
                 f = session.get(SeasonFixture, fixture_id)
                 if f and f.status == "scheduled":

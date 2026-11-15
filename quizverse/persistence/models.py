@@ -945,3 +945,63 @@ class PlayerBlock(Base):
     blocked: Mapped[PlayerProfile] = relationship(foreign_keys=[blocked_id])
 
 
+class RoomInvitation(Base):
+    """A friend-to-friend invitation to join a private or waiting game room."""
+
+    __tablename__ = "room_invitations"
+    __table_args__ = (
+        CheckConstraint("inviter_id != invitee_id", name="ck_room_invitation_distinct"),
+        CheckConstraint("status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired')", name="ck_room_invitation_status"),
+        Index("ix_room_invitations_invitee_status", "invitee_id", "status"),
+        Index("ix_room_invitations_inviter_status", "inviter_id", "status"),
+        Index("ix_room_invitations_room_code", "room_code"),
+        Index("ix_room_invitations_ticket_hash", "admission_ticket_hash"),
+        Index("ix_room_invitations_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    inviter_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    invitee_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    room_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    admission_ticket_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ticket_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ticket_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    inviter: Mapped[PlayerProfile] = relationship(foreign_keys=[inviter_id])
+    invitee: Mapped[PlayerProfile] = relationship(foreign_keys=[invitee_id])
+
+
+class RematchChallenge(Base):
+    """A casual direct rematch challenge originating from a completed historical match."""
+
+    __tablename__ = "rematch_challenges"
+    __table_args__ = (
+        CheckConstraint("challenger_id != opponent_id", name="ck_rematch_distinct"),
+        CheckConstraint("status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired')", name="ck_rematch_status"),
+        Index("ix_rematch_opponent_status", "opponent_id", "status"),
+        Index("ix_rematch_challenger_status", "challenger_id", "status"),
+        Index("ix_rematch_original_match", "original_match_id"),
+        Index("ix_rematch_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    original_match_id: Mapped[str] = mapped_column(String(32), ForeignKey("competitive_matches.id", ondelete="CASCADE"), nullable=False)
+    challenger_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    opponent_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resulting_room_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    original_match: Mapped[CompetitiveMatch] = relationship(foreign_keys=[original_match_id])
+    challenger: Mapped[PlayerProfile] = relationship(foreign_keys=[challenger_id])
+    opponent: Mapped[PlayerProfile] = relationship(foreign_keys=[opponent_id])
+
+
+

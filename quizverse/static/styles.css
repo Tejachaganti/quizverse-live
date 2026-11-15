@@ -250,6 +250,14 @@
 .social-stats-cell strong{display:block;font:700 1.25rem 'Space Grotesk',sans-serif;color:#a3e7fc}
 .social-stats-cell span{font-size:.74rem;color:#9b9cb8}
 .social-modal-actions{display:flex;gap:.6rem;flex-wrap:wrap;justify-content:flex-end;margin-top:1.2rem;border-top:1px solid #2d304e;padding-top:1rem}
+.rematch-section{margin-top:1.5rem;padding:1.2rem;background:#15162a;border:1px solid #2d304e;border-radius:14px}
+.rematch-section h3{margin:0 0 .8rem;font:700 1.1rem 'Space Grotesk',sans-serif;color:#fff}
+.rematch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.8rem}
+.rematch-card{padding:1rem;background:#1a1b32;border:1px solid #36395b;border-radius:10px;display:flex;flex-direction:column;gap:.6rem}
+.rematch-card-header{display:flex;justify-content:space-between;align-items:center}
+.rematch-card-meta{font-size:.85rem;color:#9b9cb8}
+.rematch-card-actions{display:flex;gap:.5rem;margin-top:.4rem;flex-wrap:wrap}
+.invitation-countdown{font-size:.75rem;color:#f59e0b;font-weight:600}
 
 @media(max-width:960px){
   header.topbar{padding:0 12px !important}

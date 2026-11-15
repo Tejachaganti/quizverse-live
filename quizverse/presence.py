@@ -378,6 +378,30 @@ class PresenceService:
                 "updated_at": now_iso,
             })
 
+    async def send_invitation_notification(self, invitee_id: str, invitation: dict[str, Any]) -> None:
+        """Deliver real-time room invitation event to invitee's active presence sockets."""
+        if await self.broker.is_player_connected(invitee_id):
+            await self.broker.send_to_player(invitee_id, {
+                "event": "room_invitation_received",
+                **invitation,
+            })
+
+    async def send_rematch_notification(self, opponent_id: str, challenge: dict[str, Any]) -> None:
+        """Deliver real-time rematch challenge event to opponent's active presence sockets."""
+        if await self.broker.is_player_connected(opponent_id):
+            await self.broker.send_to_player(opponent_id, {
+                "event": "rematch_challenge_received",
+                **challenge,
+            })
+
+    async def send_rematch_accepted_notification(self, challenger_id: str, payload: dict[str, Any]) -> None:
+        """Deliver real-time rematch accepted event to challenger's active presence sockets."""
+        if await self.broker.is_player_connected(challenger_id):
+            await self.broker.send_to_player(challenger_id, {
+                "event": "rematch_challenge_accepted",
+                **payload,
+            })
+
     async def maintenance_step(self) -> None:
         """Clean up idle sockets exceeding the stale threshold and reconcile activity transitions."""
         stale = await self.broker.cleanup_stale_sockets(self.stale_threshold)

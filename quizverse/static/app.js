@@ -100,6 +100,10 @@
     friendsList: [],
     incomingRequests: [],
     outgoingRequests: [],
+    incomingInvitations: [],
+    outgoingInvitations: [],
+    incomingRematches: [],
+    outgoingRematches: [],
     blockedList: [],
     playerSearchResults: [],
     searchQuery: '',
@@ -217,7 +221,7 @@
     picker.className = 'mode-picker';
     const presetOptions = [['little_explorers','Little Explorers · ages 5–7'],['young_learners','Young Learners · ages 8–10'],['junior_champions','Junior Champions · ages 11–13'],['teen_challenge','Teen Challenge · ages 14–17'],['college_arena','College Arena · ages 18–23'],['expert_arena','Expert Arena · adults / advanced']];
     const diffOptions = ['easy','medium','hard','mixed'];
-    picker.innerHTML = `<label class="form-label" for="game-mode">Choose your arena format</label><select class="field" id="game-mode" name="game-mode"><option value="classic">Classic · 15 seconds · Momentum Shift</option><option value="speed_challenge">Speed Challenge · 10 seconds · no Momentum Shift</option></select><p class="microcopy mode-description" id="mode-description">Classic: 1,000 points plus up to 500 speed points. Momentum Shift is active.</p><details class="match-settings"><summary>Learning preferences <span>(saved on this device)</span></summary><p class="microcopy">Content suitability only. This does not verify anyone’s age.</p><label>Learning preset<select class="field" id="player-preset">${presetOptions.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label><label>Preferred difficulty<select class="field" id="player-difficulty">${diffOptions.map(v=>`<option value="${v}">${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><div id="player-topic-settings"></div></details><details class="match-settings competitive-settings"><summary>Host match filters</summary><label>Question count<input class="field" id="match-count" type="number" min="1" max="20" value="10"></label><label>Difficulty<select class="field" id="match-difficulty">${diffOptions.map(v=>`<option value="${v}">${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><label>Learning suitability<select class="field" id="match-preset">${presetOptions.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label><label>Language<input class="field" id="match-language" maxlength="35" value="en"></label><label>Content scope<select class="field" id="match-scope"><option value="built_in">Built-in question bank</option><option value="public_library">Published public quizzes</option><option value="selected_quizzes">Choose published quizzes</option></select></label><label class="quiz-source-picker" hidden>Quizzes (select up to 20)<select class="field" id="match-quiz" multiple size="5" aria-label="Selected quizzes"></select></label><label>Exam collection<select class="field" id="match-exam"><option value="">Any / not applicable</option></select></label><label>Eligible categories<select class="field" id="match-categories" multiple size="5" aria-label="Eligible categories; leave empty for all"></select></label><p class="microcopy">Leave categories empty for all. Filter summaries are shared with the room.</p></details>`;
+    picker.innerHTML = `<label class="form-label" for="game-mode">Choose your arena format</label><select class="field" id="game-mode" name="game-mode"><option value="classic">Classic · 15 seconds · Momentum Shift</option><option value="speed_challenge">Speed Challenge · 10 seconds · no Momentum Shift</option></select><p class="microcopy mode-description" id="mode-description">Classic: 1,000 points plus up to 500 speed points. Momentum Shift is active.</p><details class="match-settings"><summary>Learning preferences <span>(saved on this device)</span></summary><p class="microcopy">Content suitability only. This does not verify anyone’s age.</p><label>Learning preset<select class="field" id="player-preset">${presetOptions.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label><label>Preferred difficulty<select class="field" id="player-difficulty">${diffOptions.map(v=>`<option value="${v}">${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><div id="player-topic-settings"></div></details><details class="match-settings competitive-settings"><summary>Host match filters</summary><label>Question count<input class="field" id="match-count" type="number" min="1" max="20" value="10"></label><label>Difficulty<select class="field" id="match-difficulty">${diffOptions.map(v=>`<option value="${v}">${v[0].toUpperCase()+v.slice(1)}</option>`).join('')}</select></label><label>Learning suitability<select class="field" id="match-preset">${presetOptions.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></label><label>Language<input class="field" id="match-language" maxlength="35" value="en"></label><label>Content scope<select class="field" id="match-scope"><option value="built_in">Built-in question bank</option><option value="public_library">Published public quizzes</option><option value="selected_quizzes">Choose published quizzes</option></select></label><label class="quiz-source-picker" hidden>Quizzes (select up to 20)<select class="field" id="match-quiz" multiple size="5" aria-label="Selected quizzes"></select></label><label>Exam collection<select class="field" id="match-exam"><option value="">Any / not applicable</option></select></label><label>Eligible categories<select class="field" id="match-categories" multiple size="5" aria-label="Eligible categories; leave empty for all"></select></label><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-top:0.5rem;"><input type="checkbox" id="match-private"> <span>Private / Invite-Only Arena</span></label><p class="microcopy">Leave categories empty for all. Filter summaries are shared with the room.</p></details>`;
     const drawTopics = () => {
       const host = picker.querySelector('#player-topic-settings');
       if (!state.categories.length) { host.innerHTML = '<p class="microcopy" role="status">Loading topic choices…</p>'; return; }
@@ -780,13 +784,18 @@
     `;
 
     const matches = state.profileMatches.map(match => {
+      const isRematchEligible = match.mode !== 'solo_practice' && !match.tournament_id && !match.league_id;
       const opponents = (match.opponents || []).map(op => `
         <button class="btn btn-secondary" type="button" data-action="open-h2h" data-opponent-id="${escapeHtml(op.player_id)}" data-opponent-name="${escapeHtml(op.display_name)}" style="padding:.2rem .5rem;font-size:.74rem;line-height:1;margin-left:.25rem">
           Vs ${escapeHtml(op.display_name)}
         </button>
+        ${isRematchEligible && op.player_id ? `
+        <button class="btn btn-primary" type="button" data-action="challenge-rematch" data-match-id="${escapeHtml(match.id)}" data-opponent-id="${escapeHtml(op.player_id)}" data-opponent-name="${escapeHtml(op.display_name)}" style="padding:.2rem .5rem;font-size:.74rem;line-height:1;margin-left:.25rem">
+          ⚔️ Rematch
+        </button>` : ''}
       `).join('');
       return `
-        <article class="profile-match">
+        <article class="profile-match history-item">
           <div>
             <strong>${escapeHtml(match.mode.replaceAll('_', ' '))}</strong>
             <span>${escapeHtml(new Date(match.completed_at).toLocaleString())}</span>
@@ -903,6 +912,54 @@
       `;
     }
 
+    const incomingRem = state.incomingRematches || [];
+    const outgoingRem = state.outgoingRematches || [];
+    let rematchesHtml = '';
+    if (incomingRem.length || outgoingRem.length) {
+      rematchesHtml = `
+        <div class="rematch-section">
+          <h3>Active Rematch Challenges</h3>
+          ${incomingRem.length ? `
+            <div style="margin-bottom:1rem;">
+              <strong style="font-size:0.85rem;color:#a3e7fc;">Incoming Challenges:</strong>
+              <div class="rematch-grid" style="margin-top:0.5rem;">
+                ${incomingRem.map(c => `
+                  <div class="rematch-card">
+                    <div class="rematch-card-header">
+                      <strong>${escapeHtml(c.challenger_name)}</strong>
+                      <span class="social-rating-pill">${escapeHtml(c.mode.replaceAll('_', ' '))}</span>
+                    </div>
+                    <div class="rematch-card-meta">Expires in ${c.seconds_remaining}s</div>
+                    <div class="rematch-card-actions">
+                      <button class="btn btn-primary" type="button" data-action="accept-rematch" data-challenge-id="${c.challenge_id}">Accept &amp; Play</button>
+                      <button class="btn btn-secondary" type="button" data-action="decline-rematch" data-challenge-id="${c.challenge_id}">Decline</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>` : ''}
+          ${outgoingRem.length ? `
+            <div>
+              <strong style="font-size:0.85rem;color:#8587a6;">Outgoing Challenges:</strong>
+              <div class="rematch-grid" style="margin-top:0.5rem;">
+                ${outgoingRem.map(c => `
+                  <div class="rematch-card">
+                    <div class="rematch-card-header">
+                      <strong>Vs ${escapeHtml(c.opponent_name)}</strong>
+                      <span class="social-rating-pill">${escapeHtml(c.mode.replaceAll('_', ' '))}</span>
+                    </div>
+                    <div class="rematch-card-meta">Waiting for opponent · Expires in ${c.seconds_remaining}s</div>
+                    <div class="rematch-card-actions">
+                      <button class="btn btn-secondary" type="button" data-action="cancel-rematch" data-challenge-id="${c.challenge_id}">Cancel</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>` : ''}
+        </div>
+      `;
+    }
+
     app.innerHTML = `
       ${h2hModalHtml}
       <section class="profile-card">
@@ -932,6 +989,7 @@
         <label class="form-label" for="rating-history-scope">Filter rating scope</label>
         <select class="field rating-history-scope" id="rating-history-scope">${ratingScopeOptions}</select>
         ${ratingHistoryHtml}
+        ${rematchesHtml}
         <h2>Competitive record</h2>
         ${stats.history_available ? `<div class="profile-stats"><article><strong>${stats.completed_matches}</strong><span>Matches</span></article><article><strong>${stats.wins}</strong><span>Wins</span></article><article><strong>${stats.draws}</strong><span>Draws</span></article><article><strong>${stats.losses}</strong><span>Losses</span></article></div>` : '<p class="profile-empty">No persisted match history yet. This is different from a zero win or loss record.</p>'}
         <h2>Match history</h2>
@@ -1886,6 +1944,7 @@
       if (!profileResult.response.ok || !statsResult.response.ok || !matchesResult.response.ok) throw new Error('Player profile storage is temporarily unavailable. Try again.');
       state.profile = profileResult.data; state.profileStats = statsResult.data;
       void initPresence();
+      void refreshRematches();
       if (ratingsResult && ratingsResult.response.ok) {
         state.myRatings = ratingsResult.data;
       }
@@ -1972,7 +2031,7 @@
         }, 25000);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = async (event) => {
         try {
           const msg = JSON.parse(event.data);
           if (msg.event === 'presence_ready') {
@@ -1983,6 +2042,26 @@
           } else if (msg.event === 'presence_update') {
             state.friendPresence[msg.player_id] = { status: msg.status, updated_at: msg.updated_at };
             updatePresenceUI();
+          } else if (msg.event === 'room_invitation_received') {
+            notify(`${msg.inviter_nickname || msg.inviter_handle || 'A friend'} invited you to arena ${msg.room_code}!`);
+            void refreshSocial(false);
+          } else if (msg.event === 'rematch_challenge_received') {
+            notify(`${msg.challenger_nickname || msg.challenger_handle || 'An opponent'} challenged you to a rematch in ${msg.game_mode}!`);
+            void refreshRematches();
+          } else if (msg.event === 'rematch_challenge_accepted') {
+            notify(`Rematch challenge accepted! Joining arena ${msg.room_code}…`);
+            void refreshRematches();
+            const identityTicket = await getLiveIdentityTicket();
+            if (identityTicket) {
+              send('join', {
+                name: state.name || state.profile?.display_name || 'Player',
+                code: msg.room_code,
+                identity_ticket: identityTicket,
+              });
+              state.view = 'play';
+              state.screen = 'lobby';
+              setActiveNavigation();
+            }
           }
         } catch {}
       };
@@ -2025,11 +2104,13 @@
     state.socialNotice = '';
     if (renderBeforeFetch) render();
     try {
-      const [friendsRes, incomingRes, outgoingRes, blockedRes] = await Promise.all([
+      const [friendsRes, incomingRes, outgoingRes, blockedRes, incInvRes, outInvRes] = await Promise.all([
         playerApi('/api/friends'),
         playerApi('/api/friends/requests/incoming'),
         playerApi('/api/friends/requests/outgoing'),
-        playerApi('/api/blocks')
+        playerApi('/api/blocks'),
+        playerApi('/api/social/invitations/incoming'),
+        playerApi('/api/social/invitations/outgoing'),
       ]);
       if (friendsRes.response.ok) {
         state.friendsList = friendsRes.data.friends || [];
@@ -2042,12 +2123,27 @@
       if (incomingRes.response.ok) state.incomingRequests = incomingRes.data.incoming_requests || [];
       if (outgoingRes.response.ok) state.outgoingRequests = outgoingRes.data.outgoing_requests || [];
       if (blockedRes.response.ok) state.blockedList = blockedRes.data.blocked || blockedRes.data.blocked_players || [];
+      if (incInvRes && incInvRes.response.ok) state.incomingInvitations = incInvRes.data.incoming_invitations || [];
+      if (outInvRes && outInvRes.response.ok) state.outgoingInvitations = outInvRes.data.outgoing_invitations || [];
     } catch (err) {
       state.socialNotice = err.message || 'Could not load social data.';
     } finally {
       state.socialLoading = false;
       render();
     }
+  }
+
+  async function refreshRematches() {
+    if (!state.profileCredential) return;
+    try {
+      const [inRes, outRes] = await Promise.all([
+        playerApi('/api/social/rematches/incoming'),
+        playerApi('/api/social/rematches/outgoing')
+      ]);
+      if (inRes.response.ok) state.incomingRematches = inRes.data.incoming_challenges || [];
+      if (outRes.response.ok) state.outgoingRematches = outRes.data.outgoing_challenges || [];
+      if (state.view === 'profile') render();
+    } catch {}
   }
 
   function renderFriendsTab() {
@@ -2089,6 +2185,7 @@
           </div>
         </div>
         <div class="social-card-actions">
+          ${state.room && state.room.phase === 'waiting' ? `<button class="btn btn-primary" type="button" data-action="invite-friend" data-friend-id="${f.player_id}" data-friend-name="${escapeHtml(f.display_name)}">Invite to Arena</button>` : ''}
           <button class="btn btn-secondary" type="button" data-action="view-public-profile" data-player-id="${f.player_id}">View Profile</button>
           <button class="btn btn-secondary" type="button" data-action="remove-friend" data-friend-id="${f.player_id}">Remove</button>
           <button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${f.player_id}">Block</button>
@@ -2290,6 +2387,57 @@
     `;
   }
 
+  function renderInvitationsTab() {
+    const incoming = state.incomingInvitations || [];
+    const outgoing = state.outgoingInvitations || [];
+
+    const incomingHtml = incoming.length === 0
+      ? '<div class="social-empty-state"><p>No incoming room invitations.</p></div>'
+      : `<div class="social-grid">${incoming.map(inv => `
+          <div class="social-card invitation-card">
+            <div class="social-card-user">
+              <div class="social-avatar">${escapeHtml(initials(inv.inviter_name || 'Player'))}</div>
+              <div class="social-card-meta invitation-meta">
+                <strong>${escapeHtml(inv.inviter_name)}</strong>
+                <div class="social-rating-pill">Arena: ${escapeHtml(inv.room_code)}</div>
+                <div class="invitation-countdown">Expires in ${inv.seconds_remaining}s</div>
+              </div>
+            </div>
+            <div class="social-card-actions">
+              <button class="btn btn-primary" type="button" data-action="accept-invitation" data-invitation-id="${inv.invitation_id}">Accept &amp; Join</button>
+              <button class="btn btn-secondary" type="button" data-action="decline-invitation" data-invitation-id="${inv.invitation_id}">Decline</button>
+            </div>
+          </div>
+        `).join('')}</div>`;
+
+    const outgoingHtml = outgoing.length === 0
+      ? '<div class="social-empty-state"><p>No outgoing room invitations.</p></div>'
+      : `<div class="social-grid">${outgoing.map(inv => `
+          <div class="social-card invitation-card">
+            <div class="social-card-user">
+              <div class="social-avatar">${escapeHtml(initials(inv.invitee_name || 'Player'))}</div>
+              <div class="social-card-meta invitation-meta">
+                <strong>${escapeHtml(inv.invitee_name)}</strong>
+                <div class="social-rating-pill">Arena: ${escapeHtml(inv.room_code)}</div>
+                <div class="invitation-countdown">Expires in ${inv.seconds_remaining}s</div>
+              </div>
+            </div>
+            <div class="social-card-actions">
+              <button class="btn btn-secondary" type="button" data-action="cancel-invitation" data-invitation-id="${inv.invitation_id}">Cancel</button>
+            </div>
+          </div>
+        `).join('')}</div>`;
+
+    return `
+      <div>
+        <h3 class="social-req-group-title">Incoming Invitations</h3>
+        ${incomingHtml}
+        <h3 class="social-req-group-title" style="margin-top:2rem;">Outgoing Invitations</h3>
+        ${outgoingHtml}
+      </div>
+    `;
+  }
+
   function socialScreen() {
     app.classList.remove('library-shell');
     if (!state.profileCredential) {
@@ -2312,10 +2460,14 @@
     }
 
     const unreadRequests = state.incomingRequests.length;
+    const unreadInvitations = state.incomingInvitations.length;
     const navHtml = `
       <div class="social-nav" role="tablist">
         <button class="social-tab-btn ${state.socialTab === 'friends' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="friends" role="tab" aria-selected="${state.socialTab === 'friends'}">
           Friends <span class="social-count">${state.friendsList.length}</span>
+        </button>
+        <button class="social-tab-btn ${state.socialTab === 'invitations' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="invitations" role="tab" aria-selected="${state.socialTab === 'invitations'}">
+          Invitations ${unreadInvitations > 0 ? `<span class="social-badge">${unreadInvitations}</span>` : ''}
         </button>
         <button class="social-tab-btn ${state.socialTab === 'search' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="search" role="tab" aria-selected="${state.socialTab === 'search'}">
           Find Players
@@ -2334,6 +2486,8 @@
       bodyHtml = '<div class="loading-state"><span class="loader"></span><p>Loading social data…</p></div>';
     } else if (state.socialTab === 'friends') {
       bodyHtml = renderFriendsTab();
+    } else if (state.socialTab === 'invitations') {
+      bodyHtml = renderInvitationsTab();
     } else if (state.socialTab === 'search') {
       bodyHtml = renderSearchTab();
     } else if (state.socialTab === 'requests') {
@@ -2598,8 +2752,10 @@
         const solo = mode === 'solo_practice';
         const scope = document.querySelector('#match-scope')?.value || 'built_in';
         const selectedQuizzes = [...(document.querySelector('#match-quiz')?.selectedOptions || [])].slice(0, 20).map(option => option.value);
+        const isPrivate = document.querySelector('#match-private')?.checked || false;
         send('create', {
           name: state.name, mode, ...(identityTicket ? { identity_ticket: identityTicket } : {}),
+          access_policy: isPrivate ? 'invite_only' : 'public',
           question_count: Number(document.querySelector('#match-count')?.value || 10),
           difficulty: solo ? state.preferences.difficulty : document.querySelector('#match-difficulty')?.value || 'medium',
           learning_preset: solo ? state.preferences.learning_preset : document.querySelector('#match-preset')?.value || 'teen_challenge',
@@ -3195,6 +3351,127 @@
     else if (action === 'close-public-profile') {
       state.selectedPublicProfile = null;
       render();
+    }
+    else if (action === 'invite-friend') {
+      const friendId = target.dataset.friendId;
+      if (!state.room || !state.room.code) {
+        notify('You must be inside an arena waiting room to send invitations.');
+        return;
+      }
+      if (state.room.phase !== 'waiting') {
+        notify('Invitations can only be sent while the arena is waiting for players.');
+        return;
+      }
+      try {
+        const { response, data } = await playerApi('/api/social/invitations', {
+          method: 'POST',
+          body: JSON.stringify({ invitee_id: friendId, room_code: state.room.code })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not send arena invitation.');
+        notify('Arena invitation sent!');
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'accept-invitation') {
+      const invitationId = target.dataset.invitationId;
+      try {
+        const acceptRes = await playerApi(`/api/social/invitations/${invitationId}/accept`, { method: 'POST' });
+        if (!acceptRes.response.ok) throw new Error(acceptRes.data?.error?.message || 'Could not accept invitation.');
+        const ticket = acceptRes.data.admission_ticket;
+        const joinRes = await playerApi(`/api/social/invitations/${invitationId}/join`, {
+          method: 'POST',
+          body: JSON.stringify({ admission_ticket: ticket, player_name: state.name || state.profile?.display_name || 'Player' })
+        });
+        if (!joinRes.response.ok) throw new Error(joinRes.data?.error?.message || 'Could not enter private arena.');
+        state.token = joinRes.data.token;
+        state.playerId = joinRes.data.player_id;
+        state.room = joinRes.data.state;
+        state.clockOffsetMs = Number(state.room.server_now || Date.now()) - Date.now();
+        sessionStorage.setItem('qv-token', state.token);
+        sessionStorage.setItem('qv-name', state.name || state.room.players.find(p => p.id === state.playerId)?.name || '');
+        state.view = 'play';
+        state.screen = 'lobby';
+        setActiveNavigation();
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+          send('reconnect', { token: state.token });
+        } else {
+          connect();
+        }
+        notify('Joined private arena!');
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'decline-invitation') {
+      const invitationId = target.dataset.invitationId;
+      try {
+        const { response, data } = await playerApi(`/api/social/invitations/${invitationId}/decline`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not decline invitation.');
+        notify('Invitation declined.');
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'cancel-invitation') {
+      const invitationId = target.dataset.invitationId;
+      try {
+        const { response, data } = await playerApi(`/api/social/invitations/${invitationId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not cancel invitation.');
+        notify('Invitation cancelled.');
+        await refreshSocial();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'challenge-rematch') {
+      const opponentId = target.dataset.opponentId;
+      const originalMatchId = target.dataset.matchId;
+      try {
+        const { response, data } = await playerApi('/api/social/rematches', {
+          method: 'POST',
+          body: JSON.stringify({ opponent_id: opponentId, original_match_id: originalMatchId })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not issue rematch challenge.');
+        notify('Rematch challenge issued!');
+        await refreshRematches();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'accept-rematch') {
+      const challengeId = target.dataset.challengeId;
+      try {
+        const { response, data } = await playerApi(`/api/social/rematches/${challengeId}/accept`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not accept rematch challenge.');
+        state.token = data.token;
+        state.playerId = data.player_id;
+        state.room = data.state;
+        state.clockOffsetMs = Number(state.room.server_now || Date.now()) - Date.now();
+        sessionStorage.setItem('qv-token', state.token);
+        sessionStorage.setItem('qv-name', state.name || state.room.players.find(p => p.id === state.playerId)?.name || '');
+        state.view = 'play';
+        state.screen = 'lobby';
+        setActiveNavigation();
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+          send('reconnect', { token: state.token });
+        } else {
+          connect();
+        }
+        notify('Rematch arena created!');
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'decline-rematch') {
+      const challengeId = target.dataset.challengeId;
+      try {
+        const { response, data } = await playerApi(`/api/social/rematches/${challengeId}/decline`, { method: 'POST' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not decline rematch.');
+        notify('Rematch challenge declined.');
+        await refreshRematches();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'cancel-rematch') {
+      const challengeId = target.dataset.challengeId;
+      try {
+        const { response, data } = await playerApi(`/api/social/rematches/${challengeId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not cancel rematch.');
+        notify('Rematch challenge cancelled.');
+        await refreshRematches();
+      } catch (err) { notify(err.message); }
     }
   });
   app.addEventListener('keydown', event => {

@@ -70,6 +70,8 @@ from quizverse.presence import (
     PresenceTicketService,
 )
 from quizverse.presence_api import install_presence_api
+from quizverse.persistence.invitations import InvitationService, RematchService
+from quizverse.invitations_api import install_invitations_api
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -94,6 +96,7 @@ class ConnectionHub:
         self.tickets = tickets or LiveIdentityTickets()
         self.match_history = match_history
         self.presence_service: PresenceService | None = None
+        self.invitation_ticket_validator: Any | None = None
         self.connections: dict[tuple[str, str], WebSocket] = {}
         self.peer_attempts: dict[str, deque[float]] = {}
         self.connection_lock = asyncio.Lock()
@@ -308,7 +311,25 @@ def create_app(
     )
     friend_service.presence_provider = presence_service.get_cached_state
 
+    invitation_service = InvitationService(
+        database=persistence,
+        friend_service=friend_service,
+        block_service=block_service,
+        presence_service=presence_service,
+    )
+    rematch_service = RematchService(
+        database=persistence,
+        friend_service=friend_service,
+        block_service=block_service,
+        presence_service=presence_service,
+    )
+    hub.invitation_ticket_validator = invitation_service.validate_and_consume_ticket
+
     def _on_friendship_severed(p1: str, p2: str) -> None:
+        try:
+            invitation_service.cancel_pending_between_players(p1, p2)
+        except Exception:
+            pass
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(presence_service.notify_friendship_severed(p1, p2))
@@ -350,6 +371,7 @@ def create_app(
 
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
     app.state.hub = hub
+    app.state.engine = active_engine
     app.state.database = persistence
     app.state.rating_service = match_history.rating_service
     app.state.tournament_service = tournament_service
@@ -362,6 +384,8 @@ def create_app(
     app.state.discovery_service = discovery_service
     app.state.presence_service = presence_service
     app.state.presence_tickets = presence_tickets
+    app.state.invitation_service = invitation_service
+    app.state.rematch_service = rematch_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
@@ -372,6 +396,7 @@ def create_app(
     install_competition_api(app, stats_service, h2h_service, honors_service, player_identities)
     install_social_api(app, discovery_service, friend_service, block_service, player_identities)
     install_presence_api(app, presence_service, presence_tickets, player_identities)
+    install_invitations_api(app, invitation_service, rematch_service, player_identities, active_engine)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:
@@ -438,7 +463,13 @@ def create_app(
                         if identity is not None:
                             raise GameError("already_joined", "This connection already belongs to an arena.")
                         profile_id = await hub._profile_for_ticket(event.identity_ticket)
-                        joined = await hub.engine.join_room(event.code, event.name, profile_id=profile_id)
+                        joined = await hub.engine.join_room(
+                            event.code,
+                            event.name,
+                            profile_id=profile_id,
+                            admission_ticket=event.admission_ticket,
+                            ticket_validator=hub.invitation_ticket_validator,
+                        )
                         identity = (str(joined["state"]["code"]), str(joined["player_id"]))
                         await hub.attach(identity, websocket)
                         await hub.send(websocket, "joined", joined["state"], token=joined["token"], player_id=joined["player_id"])
