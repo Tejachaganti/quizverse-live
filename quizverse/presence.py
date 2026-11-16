@@ -212,6 +212,26 @@ class PresenceService:
         self._grace_tasks: dict[str, asyncio.Task] = {}
         self._current_states: dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self.loop: asyncio.AbstractEventLoop | None = None
+
+    def safe_dispatch(self, coro: Any) -> None:
+        """Safely schedule a coroutine onto the application event loop from any thread."""
+        loop = self.loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+        if loop.is_closed():
+            return
+        try:
+            current_loop = asyncio.get_running_loop()
+            if current_loop is loop:
+                loop.create_task(coro)
+                return
+        except RuntimeError:
+            pass
+        asyncio.run_coroutine_threadsafe(coro, loop)
 
     async def determine_player_state(self, player_id: str) -> str:
         """Derive the player's true presence state from socket connectivity and GameEngine room state."""
@@ -458,6 +478,49 @@ class PresenceService:
         if await self.broker.is_player_connected(recipient_id):
             await self.broker.send_to_player(recipient_id, payload)
 
+    async def send_notification_received(self, recipient_id: str, notification: dict[str, Any]) -> bool:
+        """Deliver real-time notification to authenticated recipient's active presence sockets."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "notification_received",
+                "notification": notification,
+            })
+            return True
+        return False
+
+    async def send_notification_read(self, recipient_id: str, payload: dict[str, Any]) -> None:
+        """Deliver real-time notification read status to recipient sockets."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "notification_read",
+                **payload,
+            })
+
+    async def send_notification_deleted(self, recipient_id: str, payload: dict[str, Any]) -> None:
+        """Deliver real-time notification deletion to recipient sockets."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "notification_deleted",
+                **payload,
+            })
+
+    async def send_notification_unread_count(self, recipient_id: str, count: int) -> None:
+        """Deliver real-time unread notification count update to recipient sockets."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "notification_unread_count",
+                "unread_count": count,
+            })
+
+    async def send_notification_preferences_updated(self, player_id: str, preferences: dict[str, Any]) -> None:
+        """Deliver real-time notification preferences update to player sockets."""
+        if await self.broker.is_player_connected(player_id):
+            await self.broker.send_to_player(player_id, {
+                "event": "notification_preferences_updated",
+                "preferences": preferences,
+            })
+
+
 
     async def maintenance_step(self) -> None:
         """Clean up idle sockets exceeding the stale threshold and reconcile activity transitions."""
@@ -489,6 +552,7 @@ class PresenceService:
 
     async def maintenance_loop(self, stop_event: asyncio.Event) -> None:
         """Periodic background task that runs maintenance every 5.0 seconds."""
+        self.loop = asyncio.get_running_loop()
         while not stop_event.is_set():
             try:
                 await asyncio.sleep(5.0)

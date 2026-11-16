@@ -18,6 +18,7 @@ from quizverse.persistence.models import (
     Friendship,
     MessageReport,
     PlayerBlock,
+    PlayerNotification,
     PlayerProfile,
     utc_now,
 )
@@ -52,11 +53,13 @@ class MessagingService:
         block_service: BlockService,
         *,
         clock: Callable[[], datetime] = utc_now,
+        notification_service: Any = None,
     ) -> None:
         self._database = database
         self.friend_service = friend_service
         self.block_service = block_service
         self._clock = clock
+        self.notification_service = notification_service
 
     def _canonical_pair(self, p1: str, p2: str) -> tuple[str, str]:
         return (p1, p2) if p1 < p2 else (p2, p1)
@@ -363,7 +366,7 @@ class MessagingService:
             sender = session.get(PlayerProfile, sender_id)
             sender_name = sender.display_name if sender else "Player"
 
-            return {
+            result_msg = {
                 "id": msg_id,
                 "conversation_id": conversation_id,
                 "sender_id": sender_id,
@@ -377,6 +380,21 @@ class MessagingService:
                 "created_at": now.isoformat(),
                 "reactions": {},
             }
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                recipient_id,
+                "direct_message_received",
+                "New Direct Message",
+                f"New message from {sender_name}.",
+                actor_id=sender_id,
+                target_type="conversation",
+                target_id=conversation_id,
+                deduplication_key=f"dm:{conversation_id}",
+                metadata={"conversation_id": conversation_id},
+            )
+
+        return result_msg
 
     def edit_message(self, message_id: str, sender_id: str, new_content: str) -> dict[str, Any]:
         """Edit message content within the 5-minute ownership window."""
@@ -483,13 +501,37 @@ class MessagingService:
                     m.delivered_at = now
                 marked_ids.append(m.id)
 
-            return {
-                "conversation_id": conversation_id,
-                "player_id": player_id,
-                "other_player_id": other_player_id,
-                "read_at": now.isoformat(),
-                "marked_message_ids": marked_ids,
-            }
+            # Clear or mark read any notification for this conversation
+            session.execute(
+                update(PlayerNotification)
+                .where(
+                    PlayerNotification.recipient_id == player_id,
+                    PlayerNotification.deduplication_key == f"dm:{conversation_id}",
+                    PlayerNotification.is_read.is_(False),
+                )
+                .values(is_read=True, read_at=now)
+            )
+
+        if self.notification_service is not None and self.notification_service.presence_service is not None:
+            count = self.notification_service.get_unread_count(player_id)
+            ps = self.notification_service.presence_service
+            if hasattr(ps, "safe_dispatch"):
+                ps.safe_dispatch(ps.send_notification_unread_count(player_id, count))
+            else:
+                try:
+                    import asyncio
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(ps.send_notification_unread_count(player_id, count))
+                except RuntimeError:
+                    pass
+
+        return {
+            "conversation_id": conversation_id,
+            "player_id": player_id,
+            "other_player_id": other_player_id,
+            "read_at": now.isoformat(),
+            "marked_message_ids": marked_ids,
+        }
 
     def mark_delivered(self, message_id: str, recipient_id: str) -> bool:
         """Record real-time delivery receipt when delivered to an active socket."""

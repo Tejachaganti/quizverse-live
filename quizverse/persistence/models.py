@@ -1109,5 +1109,68 @@ class MessageReport(Base):
     message: Mapped[DirectMessage] = relationship(back_populates="reports")
 
 
+class PlayerNotification(Base):
+    """Persistent player notification across social, competition, and achievements."""
+
+    __tablename__ = "player_notifications"
+    __table_args__ = (
+        Index("ix_player_notifications_recipient_read", "recipient_id", "is_read"),
+        Index("ix_player_notifications_recipient_created", "recipient_id", "created_at"),
+        Index("ix_player_notifications_type", "notification_type"),
+        Index("ix_player_notifications_dedup", "recipient_id", "deduplication_key"),
+        Index("ix_player_notifications_expires", "expires_at"),
+        UniqueConstraint("recipient_id", "deduplication_key", name="uq_player_notification_dedup"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    recipient_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="SET NULL"), nullable=True)
+    notification_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    body: Mapped[str] = mapped_column(String(500), nullable=False)
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deduplication_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    recipient: Mapped[PlayerProfile] = relationship(foreign_keys=[recipient_id])
+    actor: Mapped[PlayerProfile | None] = relationship(foreign_keys=[actor_id])
+
+
+class NotificationPreference(Base):
+    """Configurable notification categories and preferences per player profile."""
+
+    __tablename__ = "notification_preferences"
+    __table_args__ = (
+        Index("ix_notification_preferences_player", "player_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), unique=True, nullable=False)
+    friend_requests: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    friendship_updates: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    friend_online: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    room_invitations: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    rematch_challenges: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    direct_message_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    tournament_updates: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    league_updates: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    achievement_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    rating_milestones: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    personal_best_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    browser_sound: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    visual_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
+
+
+
 
 

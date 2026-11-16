@@ -96,7 +96,7 @@
     h2hOpponentId: '',
     h2hOpponentName: '',
     h2hError: '',
-    socialTab: 'friends',
+    socialTab: 'overview',
     friendsList: [],
     incomingRequests: [],
     outgoingRequests: [],
@@ -129,12 +129,33 @@
     messageSearchQuery: '',
     roomChatOpen: false,
     roomChatUnread: 0,
+    notifCenterOpen: false,
+    notifUnreadCount: 0,
+    notifications: [],
+    notifTab: 'all',
+    notifUnreadOnly: false,
+    notifLoading: false,
+    notifPreferences: null,
+    notifPreferencesOpen: false,
+    socialOverview: null,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[char]);
   const initials = name => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
   const formatMode = mode => String(mode || '').split('_').map(s => s ? s[0].toUpperCase() + s.slice(1) : '').join(' ');
+  const timeAgo = dateStr => {
+    if (!dateStr) return '';
+    const diff = Math.max(0, Date.now() - new Date(dateStr).getTime());
+    const secs = Math.floor(diff / 1000);
+    if (secs < 60) return 'Just now';
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
   const send = (event, data = {}) => {
     if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
       notify('Reconnecting to the arena. Try again in a moment.');
@@ -2061,6 +2082,7 @@
       ws.onopen = () => {
         state.presenceReconnectDelay = 1000;
         ws.send(JSON.stringify({ event: 'presence_auth', ticket }));
+        void fetchNotificationUnreadCount();
         if (state.presenceHeartbeatTimer) clearInterval(state.presenceHeartbeatTimer);
         state.presenceHeartbeatTimer = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -2208,6 +2230,32 @@
               delete state.typingFriends[msg.conversation_id];
               if (state.view === 'social' && state.socialTab === 'messages') render();
             }
+          } else if (msg.event === 'notification_received') {
+            const notif = msg.notification || msg;
+            state.notifUnreadCount = (state.notifUnreadCount || 0) + 1;
+            updateNotifBadgeUI();
+            if (state.notifCenterOpen) {
+              state.notifications = [notif, ...(state.notifications || [])];
+              renderNotificationCenter();
+            }
+            playChimeSound();
+            notify(`🔔 ${notif.title}: ${notif.body}`);
+          } else if (msg.event === 'notification_unread_count') {
+            state.notifUnreadCount = msg.unread_count;
+            updateNotifBadgeUI();
+          } else if (msg.event === 'notification_read') {
+            const id = msg.id;
+            const item = (state.notifications || []).find(n => n.id === id);
+            if (item) {
+              item.is_read = true;
+              if (state.notifCenterOpen) renderNotificationCenter();
+            }
+          } else if (msg.event === 'notification_deleted') {
+            const id = msg.id;
+            state.notifications = (state.notifications || []).filter(n => n.id !== id);
+            if (state.notifCenterOpen) renderNotificationCenter();
+          } else if (msg.event === 'notification_preferences_updated') {
+            state.notifPreferences = msg.preferences;
           }
         } catch {}
       };
@@ -2298,7 +2346,7 @@
     state.socialNotice = '';
     if (renderBeforeFetch) render();
     try {
-      const [friendsRes, incomingRes, outgoingRes, blockedRes, incInvRes, outInvRes, convRes] = await Promise.all([
+      const [friendsRes, incomingRes, outgoingRes, blockedRes, incInvRes, outInvRes, convRes, overviewRes] = await Promise.all([
         playerApi('/api/friends'),
         playerApi('/api/friends/requests/incoming'),
         playerApi('/api/friends/requests/outgoing'),
@@ -2306,7 +2354,10 @@
         playerApi('/api/social/invitations/incoming'),
         playerApi('/api/social/invitations/outgoing'),
         playerApi('/api/messages/conversations'),
+        playerApi('/api/notifications/social-overview'),
       ]);
+      if (overviewRes && overviewRes.response.ok) state.socialOverview = overviewRes.data;
+      void fetchNotificationUnreadCount();
       if (friendsRes.response.ok) {
         state.friendsList = friendsRes.data.friends || [];
         state.friendsList.forEach(f => {
@@ -2958,6 +3009,359 @@
     `;
   }
 
+  function updateNotifBadgeUI() {
+    const badge = document.querySelector('#notif-bell-badge');
+    if (!badge) return;
+    const count = state.notifUnreadCount || 0;
+    if (count > 0) {
+      badge.style.display = 'inline-block';
+      badge.classList.remove('hidden');
+      badge.textContent = count > 99 ? '99+' : String(count);
+    } else {
+      badge.style.display = 'none';
+      badge.classList.add('hidden');
+      badge.textContent = '0';
+    }
+  }
+
+  function playChimeSound() {
+    try {
+      if (state.notifPreferences && state.notifPreferences.browser_sound === false) return;
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    } catch {}
+  }
+
+  async function fetchNotificationUnreadCount() {
+    if (!state.profileCredential) return;
+    try {
+      const { response, data } = await playerApi('/api/notifications/unread-count');
+      if (response.ok && typeof data?.unread_count === 'number') {
+        state.notifUnreadCount = data.unread_count;
+        updateNotifBadgeUI();
+      }
+    } catch {}
+  }
+
+  async function fetchNotifications(filter, unreadOnly) {
+    if (!state.profileCredential) return;
+    if (filter !== undefined) state.notifTab = filter;
+    if (unreadOnly !== undefined) state.notifUnreadOnly = unreadOnly;
+    state.notifLoading = true;
+    renderNotificationCenter();
+    try {
+      const q = new URLSearchParams();
+      if (state.notifTab && state.notifTab !== 'all') q.set('filter', state.notifTab);
+      if (state.notifUnreadOnly) q.set('unread_only', 'true');
+      q.set('limit', '50');
+      const { response, data } = await playerApi(`/api/notifications?${q.toString()}`);
+      if (response.ok) {
+        state.notifications = data.notifications || [];
+      }
+    } catch {}
+    finally {
+      state.notifLoading = false;
+      renderNotificationCenter();
+    }
+  }
+
+  async function fetchNotificationPreferences() {
+    if (!state.profileCredential) return;
+    try {
+      const { response, data } = await playerApi('/api/notifications/preferences');
+      if (response.ok) {
+        state.notifPreferences = data;
+        state.notifPreferencesOpen = true;
+        renderNotificationPreferencesModal();
+      }
+    } catch {}
+  }
+
+  async function saveNotificationPreferences(prefs) {
+    if (!state.profileCredential) return;
+    try {
+      const { response, data } = await playerApi('/api/notifications/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify(prefs),
+      });
+      if (response.ok) {
+        state.notifPreferences = data;
+        state.notifPreferencesOpen = false;
+        renderNotificationPreferencesModal();
+        notify('Notification preferences updated.');
+      } else {
+        notify('Failed to update preferences.');
+      }
+    } catch {
+      notify('Failed to update preferences.');
+    }
+  }
+
+  function renderNotificationPreferencesModal() {
+    const container = document.querySelector('#notif-modal-container');
+    if (!container) return;
+    if (!state.notifPreferencesOpen || !state.notifPreferences) {
+      container.innerHTML = '';
+      return;
+    }
+    const p = state.notifPreferences;
+    const catRows = [
+      { key: 'friend_requests', label: 'Friend Requests', desc: 'New friend requests from players' },
+      { key: 'friendship_updates', label: 'Friendship Updates', desc: 'Accepted friend requests and updates' },
+      { key: 'friend_online', label: 'Friend Online Alerts', desc: 'Alerts when your friends come online' },
+      { key: 'room_invitations', label: 'Room Invitations', desc: 'Invitations to multiplayer arenas' },
+      { key: 'rematch_challenges', label: 'Rematch Challenges', desc: 'Challenges to 1v1 rematches' },
+      { key: 'direct_message_notifications', label: 'Direct Messages', desc: 'Private messages from friends' },
+      { key: 'tournament_updates', label: 'Tournament Alerts', desc: 'Match calls, advancements, and eliminations' },
+      { key: 'league_updates', label: 'League Alerts', desc: 'Season schedules, rounds, and standings' },
+      { key: 'achievement_notifications', label: 'Achievements', desc: 'Badges, honors, and trophy milestones' },
+      { key: 'rating_milestones', label: 'Rating Milestones', desc: 'Competitive skill tier and milestone upgrades' },
+      { key: 'personal_best_notifications', label: 'Personal Bests', desc: 'New high-score and accuracy records' },
+    ].map(item => `
+      <div class="prefs-row">
+        <div class="prefs-label">
+          <span>${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.desc)}</span>
+        </div>
+        <div class="prefs-toggle">
+          <input type="checkbox" id="pref-${item.key}" ${p[item.key] ? 'checked' : ''} data-pref-key="${item.key}">
+        </div>
+      </div>
+    `).join('');
+
+    const deliveryRows = [
+      { key: 'visual_notifications', label: 'Visual In-App Notifications', desc: 'Show toast alerts and live badges' },
+      { key: 'browser_sound', label: 'Sound Effects', desc: 'Play audio chime on incoming notifications' },
+    ].map(item => `
+      <div class="prefs-row">
+        <div class="prefs-label">
+          <span>${escapeHtml(item.label)}</span>
+          <span>${escapeHtml(item.desc)}</span>
+        </div>
+        <div class="prefs-toggle">
+          <input type="checkbox" id="pref-${item.key}" ${p[item.key] ? 'checked' : ''} data-pref-key="${item.key}">
+        </div>
+      </div>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="modal-backdrop" data-action="close-notif-backdrop">
+        <div class="modal-card" style="max-width: 520px; max-height: 85vh; overflow-y: auto;">
+          <div class="modal-header">
+            <h3>Notification Preferences</h3>
+            <button class="btn btn-secondary btn-sm" type="button" data-action="close-notif-prefs">✕</button>
+          </div>
+          <div class="modal-body">
+            <h4 style="margin: 0.5rem 0 0.25rem; font-size: 0.85rem; color: #a3a6cc; text-transform: uppercase; letter-spacing: 0.05em;">Categories</h4>
+            <div class="prefs-grid">
+              ${catRows}
+            </div>
+            <h4 style="margin: 1rem 0 0.25rem; font-size: 0.85rem; color: #a3a6cc; text-transform: uppercase; letter-spacing: 0.05em;">Delivery</h4>
+            <div class="prefs-grid">
+              ${deliveryRows}
+            </div>
+          </div>
+          <div class="modal-actions" style="margin-top: 1rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
+            <button class="btn btn-secondary" type="button" data-action="close-notif-prefs">Cancel</button>
+            <button class="btn btn-primary" type="button" data-action="save-notif-prefs">Save Preferences</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNotificationCenter() {
+    const panel = document.querySelector('#notif-center-panel');
+    if (!panel) return;
+    if (!state.notifCenterOpen) {
+      panel.classList.remove('open');
+      panel.classList.add('closed');
+      return;
+    }
+    panel.classList.remove('closed');
+    panel.classList.add('open');
+
+    const tabs = [
+      { id: 'all', label: 'All' },
+      { id: 'social', label: 'Social' },
+      { id: 'invitations', label: 'Invites' },
+      { id: 'tournaments', label: 'Tournaments' },
+      { id: 'achievements', label: 'Achievements' },
+    ];
+    const tabsHtml = tabs.map(t => `
+      <button class="notif-tab ${state.notifTab === t.id ? 'active' : ''}" type="button" data-action="notif-tab" data-tab="${t.id}">${escapeHtml(t.label)}</button>
+    `).join('');
+
+    let listHtml = '';
+    if (state.notifLoading && (!state.notifications || !state.notifications.length)) {
+      listHtml = '<div class="notif-empty"><span class="loader"></span><p>Loading notifications…</p></div>';
+    } else if (!state.notifications || !state.notifications.length) {
+      listHtml = '<div class="notif-empty"><p>No notifications to display.</p></div>';
+    } else {
+      listHtml = state.notifications.map(n => {
+        let icon = '🔔';
+        if (n.notification_type?.startsWith('friend')) icon = '👥';
+        else if (n.notification_type?.includes('invitation') || n.notification_type?.includes('rematch')) icon = '⚔️';
+        else if (n.notification_type?.includes('tournament')) icon = '🏆';
+        else if (n.notification_type?.includes('league')) icon = '🏅';
+        else if (n.notification_type?.includes('achievement') || n.notification_type?.includes('milestone') || n.notification_type?.includes('personal_best')) icon = '🎖️';
+        else if (n.notification_type === 'direct_message') icon = '💬';
+
+        let navBtn = '';
+        if (n.target_type) {
+          let label = 'View';
+          if (n.target_type === 'invitation') label = 'View Invite';
+          else if (n.target_type === 'rematch') label = 'View Challenge';
+          else if (n.target_type === 'message') label = 'Open Chat';
+          else if (n.target_type === 'tournament') label = 'View Tournament';
+          else if (n.target_type === 'league') label = 'View League';
+          navBtn = `<button class="btn btn-primary btn-xs" type="button" data-action="notif-navigate" data-id="${n.id}" data-target-type="${escapeHtml(n.target_type)}" data-target-id="${escapeHtml(n.target_id || '')}">${escapeHtml(label)}</button>`;
+        }
+
+        return `
+          <div class="notif-item ${n.is_read ? 'read' : 'unread'}" data-notif-id="${n.id}">
+            <div class="notif-icon">${icon}</div>
+            <div class="notif-body-wrap">
+              <div class="notif-title">${escapeHtml(n.title)}</div>
+              <div class="notif-text">${escapeHtml(n.body)}</div>
+              <div class="notif-meta">
+                <span>${timeAgo(n.created_at)}</span>
+              </div>
+              <div class="notif-actions">
+                ${navBtn}
+                <button class="btn btn-ghost btn-xs" type="button" data-action="notif-toggle-read" data-id="${n.id}" title="${n.is_read ? 'Mark as unread' : 'Mark as read'}">${n.is_read ? 'Mark unread' : 'Mark read'}</button>
+                <button class="btn btn-ghost btn-xs" type="button" data-action="notif-delete" data-id="${n.id}" title="Delete notification">🗑️</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    panel.innerHTML = `
+      <div class="notif-header">
+        <h3>🔔 Notifications ${state.notifUnreadCount > 0 ? `<span class="notif-badge" style="position:static;display:inline-block;">${state.notifUnreadCount}</span>` : ''}</h3>
+        <div class="notif-header-actions">
+          <button class="btn btn-secondary btn-sm" type="button" data-action="open-notif-prefs" title="Preferences">⚙️</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-action="close-notif-center" title="Close">✕</button>
+        </div>
+      </div>
+      <div class="notif-tabs">
+        ${tabsHtml}
+      </div>
+      <div class="notif-toolbar">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="notif-unread-only-toggle" ${state.notifUnreadOnly ? 'checked' : ''} data-action="toggle-notif-unread-only"> Unread only
+        </label>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" type="button" data-action="notif-mark-all-read">Mark all read</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="notif-clear-read">Clear read</button>
+        </div>
+      </div>
+      <div class="notif-list">
+        ${listHtml}
+      </div>
+    `;
+  }
+
+  function renderOverviewTab() {
+    const o = state.socialOverview || {
+      friend_count: state.friendsList.length,
+      online_friends_count: 0,
+      pending_requests_count: state.incomingRequests.length,
+      pending_invitations_count: state.incomingInvitations.length,
+      pending_challenges_count: state.incomingRematches.length,
+      unread_messages_count: (state.conversations || []).reduce((acc, c) => acc + (c.unread_count || 0), 0),
+      recent_activity: [],
+    };
+
+    const hasRequests = o.pending_requests_count > 0;
+    const hasInvites = o.pending_invitations_count > 0;
+    const hasChallenges = o.pending_challenges_count > 0;
+    const hasUnreadDms = o.unread_messages_count > 0;
+
+    let activityListHtml = '';
+    const activities = o.recent_activity || [];
+    if (activities.length === 0) {
+      activityListHtml = `
+        <div class="social-empty-state" style="padding:1.5rem 1rem;">
+          <p style="color:#8e90b8;margin:0;">No recent activity yet in your circle. Connect with players, join tournaments, or play matches!</p>
+        </div>
+      `;
+    } else {
+      activityListHtml = activities.map(act => {
+        let icon = '👥';
+        if (act.type === 'tournament_podium') icon = '🏆';
+        else if (act.type === 'league_podium') icon = '🥇';
+        return `
+          <div class="overview-activity-card">
+            <div style="display:flex;align-items:center;gap:0.75rem;">
+              <span style="font-size:1.4rem;">${icon}</span>
+              <div class="overview-act-main">
+                <span class="overview-act-title">${escapeHtml(act.title)}</span>
+                <span class="overview-act-desc">${escapeHtml(act.description)}</span>
+              </div>
+            </div>
+            <span class="overview-act-time">${timeAgo(act.timestamp)}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    return `
+      <div class="social-overview-shell">
+        <div class="overview-stats-grid">
+          <div class="overview-card" data-action="social-tab" data-tab="friends">
+            <span class="overview-card-val">${o.friend_count} <span style="font-size:0.85rem;color:#4ade80;">(${o.online_friends_count} Online)</span></span>
+            <span class="overview-card-lbl">Friends</span>
+          </div>
+          <div class="overview-card ${hasRequests ? 'has-pending' : ''}" data-action="social-tab" data-tab="requests">
+            <span class="overview-card-val">${o.pending_requests_count}</span>
+            <span class="overview-card-lbl">Friend Requests ${hasRequests ? '🔥' : ''}</span>
+          </div>
+          <div class="overview-card ${hasInvites ? 'has-pending' : ''}" data-action="social-tab" data-tab="invitations">
+            <span class="overview-card-val">${o.pending_invitations_count}</span>
+            <span class="overview-card-lbl">Room Invitations ${hasInvites ? '⚔️' : ''}</span>
+          </div>
+          <div class="overview-card ${hasChallenges ? 'has-pending' : ''}" data-action="social-tab" data-tab="invitations">
+            <span class="overview-card-val">${o.pending_challenges_count}</span>
+            <span class="overview-card-lbl">Rematch Challenges ${hasChallenges ? '⚡' : ''}</span>
+          </div>
+          <div class="overview-card ${hasUnreadDms ? 'has-pending' : ''}" data-action="social-tab" data-tab="messages">
+            <span class="overview-card-val">${o.unread_messages_count}</span>
+            <span class="overview-card-lbl">Unread Messages ${hasUnreadDms ? '💬' : ''}</span>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+          <button class="btn btn-secondary btn-sm" type="button" data-action="social-tab" data-tab="search">🔍 Find Players</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-action="social-tab" data-tab="messages">💬 Arena Chat / Messages</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-action="social-tab" data-tab="friends">👥 Manage Friends</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-action="open-notif-prefs">⚙️ Notification Preferences</button>
+        </div>
+
+        <div class="overview-activity-section">
+          <h3>Recent Circle Activity</h3>
+          <div class="overview-activity-list">
+            ${activityListHtml}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function socialScreen() {
     app.classList.remove('library-shell');
     if (!state.profileCredential) {
@@ -2984,6 +3388,9 @@
     const unreadMessages = (state.conversations || []).reduce((acc, c) => acc + (c.unread_count || 0), 0);
     const navHtml = `
       <div class="social-nav" role="tablist">
+        <button class="social-tab-btn ${state.socialTab === 'overview' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="overview" role="tab" aria-selected="${state.socialTab === 'overview'}">
+          Overview
+        </button>
         <button class="social-tab-btn ${state.socialTab === 'friends' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="friends" role="tab" aria-selected="${state.socialTab === 'friends'}">
           Friends <span class="social-count">${state.friendsList.length}</span>
         </button>
@@ -3006,8 +3413,10 @@
     `;
 
     let bodyHtml = '';
-    if (state.socialLoading && !state.friendsList.length && !state.playerSearchResults.length && !state.conversations.length) {
+    if (state.socialLoading && !state.friendsList.length && !state.playerSearchResults.length && !state.conversations.length && !state.socialOverview) {
       bodyHtml = '<div class="loading-state"><span class="loader"></span><p>Loading social data…</p></div>';
+    } else if (state.socialTab === 'overview') {
+      bodyHtml = renderOverviewTab();
     } else if (state.socialTab === 'friends') {
       bodyHtml = renderFriendsTab();
     } else if (state.socialTab === 'messages') {
@@ -3760,7 +4169,14 @@
     else if (action === 'social-tab') {
       state.socialTab = target.dataset.tab;
       render();
-      if (state.socialTab === 'messages') {
+      if (state.socialTab === 'overview') {
+        playerApi('/api/notifications/social-overview').then(res => {
+          if (res.response.ok) {
+            state.socialOverview = res.data;
+            render();
+          }
+        });
+      } else if (state.socialTab === 'messages') {
         playerApi('/api/messages/conversations').then(res => {
           if (res.response.ok) {
             state.conversations = res.data.conversations || [];
@@ -4258,6 +4674,176 @@
       else button.removeAttribute('aria-current');
     });
   }
+  document.addEventListener('click', async event => {
+    const bellBtn = event.target.closest('[data-action="toggle-notif-center"], #notif-bell-btn');
+    if (bellBtn) {
+      event.preventDefault();
+      state.notifCenterOpen = !state.notifCenterOpen;
+      if (state.notifCenterOpen) {
+        void fetchNotifications();
+      }
+      renderNotificationCenter();
+      return;
+    }
+
+    if (event.target.closest('[data-action="close-notif-center"]')) {
+      state.notifCenterOpen = false;
+      renderNotificationCenter();
+      return;
+    }
+
+    const notifTabBtn = event.target.closest('[data-action="notif-tab"]');
+    if (notifTabBtn) {
+      state.notifTab = notifTabBtn.dataset.tab;
+      void fetchNotifications(state.notifTab);
+      return;
+    }
+
+    const unreadOnlyToggle = event.target.closest('[data-action="toggle-notif-unread-only"]');
+    if (unreadOnlyToggle) {
+      state.notifUnreadOnly = !state.notifUnreadOnly;
+      void fetchNotifications(state.notifTab, state.notifUnreadOnly);
+      return;
+    }
+
+    const toggleReadBtn = event.target.closest('[data-action="notif-toggle-read"]');
+    if (toggleReadBtn) {
+      const id = toggleReadBtn.dataset.id;
+      const item = (state.notifications || []).find(n => n.id === id);
+      if (item) {
+        const markUnread = item.is_read;
+        item.is_read = !markUnread;
+        if (markUnread) {
+          state.notifUnreadCount = (state.notifUnreadCount || 0) + 1;
+          void playerApi(`/api/notifications/${id}/unread`, { method: 'POST' });
+        } else {
+          state.notifUnreadCount = Math.max(0, (state.notifUnreadCount || 0) - 1);
+          void playerApi(`/api/notifications/${id}/read`, { method: 'POST' });
+        }
+        updateNotifBadgeUI();
+        renderNotificationCenter();
+      }
+      return;
+    }
+
+    if (event.target.closest('[data-action="notif-mark-all-read"]')) {
+      (state.notifications || []).forEach(n => { n.is_read = true; });
+      state.notifUnreadCount = 0;
+      updateNotifBadgeUI();
+      renderNotificationCenter();
+      void playerApi('/api/notifications/mark-all-read', { method: 'POST' });
+      return;
+    }
+
+    const delBtn = event.target.closest('[data-action="notif-delete"]');
+    if (delBtn) {
+      const id = delBtn.dataset.id;
+      const item = (state.notifications || []).find(n => n.id === id);
+      if (item && !item.is_read) {
+        state.notifUnreadCount = Math.max(0, (state.notifUnreadCount || 0) - 1);
+        updateNotifBadgeUI();
+      }
+      state.notifications = (state.notifications || []).filter(n => n.id !== id);
+      renderNotificationCenter();
+      void playerApi(`/api/notifications/${id}`, { method: 'DELETE' });
+      return;
+    }
+
+    if (event.target.closest('[data-action="notif-clear-read"]')) {
+      state.notifications = (state.notifications || []).filter(n => !n.is_read);
+      renderNotificationCenter();
+      void playerApi('/api/notifications/clear-read', { method: 'DELETE' });
+      return;
+    }
+
+    if (event.target.closest('[data-action="open-notif-prefs"]')) {
+      void fetchNotificationPreferences();
+      return;
+    }
+
+    if (event.target.matches('[data-action="close-notif-backdrop"]') || event.target.closest('[data-action="close-notif-prefs"]')) {
+      state.notifPreferencesOpen = false;
+      renderNotificationPreferencesModal();
+      return;
+    }
+
+    if (event.target.closest('[data-action="save-notif-prefs"]')) {
+      const modal = document.querySelector('#notif-modal-container');
+      if (!modal) return;
+      const inputs = modal.querySelectorAll('input[data-pref-key]');
+      const payload = {};
+      inputs.forEach(inp => {
+        payload[inp.dataset.prefKey] = inp.checked;
+      });
+      void saveNotificationPreferences(payload);
+      return;
+    }
+
+    const notifTarget = event.target.closest('[data-action="notif-navigate"]');
+    if (notifTarget) {
+      const id = notifTarget.dataset.id;
+      const targetType = notifTarget.dataset.targetType;
+      const targetId = notifTarget.dataset.targetId;
+      if (id) {
+        void playerApi(`/api/notifications/${id}/read`, { method: 'POST' });
+        const item = (state.notifications || []).find(n => n.id === id);
+        if (item && !item.is_read) {
+          item.is_read = true;
+          state.notifUnreadCount = Math.max(0, (state.notifUnreadCount || 0) - 1);
+          updateNotifBadgeUI();
+        }
+      }
+      state.notifCenterOpen = false;
+      renderNotificationCenter();
+
+      if (targetType === 'invitation' || targetType === 'rematch') {
+        state.view = 'social';
+        state.socialTab = 'invitations';
+        setActiveNavigation();
+        render();
+        void refreshSocial();
+      } else if (targetType === 'message') {
+        state.view = 'social';
+        state.socialTab = 'messages';
+        state.activeConversationId = targetId;
+        setActiveNavigation();
+        render();
+        void refreshActiveMessages();
+      } else if (targetType === 'friend' || targetType === 'friend_request') {
+        state.view = 'social';
+        state.socialTab = targetType === 'friend_request' ? 'requests' : 'friends';
+        setActiveNavigation();
+        render();
+        void refreshSocial();
+      } else if (targetType === 'tournament') {
+        state.view = 'tournaments';
+        state.selectedTournamentId = targetId;
+        setActiveNavigation();
+        void refreshTournaments();
+      } else if (targetType === 'league') {
+        state.view = 'leagues';
+        state.selectedLeagueId = targetId;
+        setActiveNavigation();
+        void refreshLeagues();
+      } else if (targetType === 'profile') {
+        state.view = 'profile';
+        setActiveNavigation();
+        void refreshProfile();
+      }
+      return;
+    }
+
+    if (state.notifCenterOpen) {
+      const insidePanel = event.target.closest('#notif-center-panel');
+      const insideBell = event.target.closest('#notif-bell-btn');
+      const insideModal = event.target.closest('#notif-modal-container');
+      if (!insidePanel && !insideBell && !insideModal) {
+        state.notifCenterOpen = false;
+        renderNotificationCenter();
+      }
+    }
+  });
+
   document.querySelector('#primary-navigation').addEventListener('click', event => {
     const button = event.target.closest('[data-view]');
     if (!button) return;
@@ -4272,6 +4858,9 @@
     else render();
   });
   setActiveNavigation();
-  if (state.profileCredential) void initPresence();
+  if (state.profileCredential) {
+    void initPresence();
+    void fetchNotificationUnreadCount();
+  }
   connect();
 })();

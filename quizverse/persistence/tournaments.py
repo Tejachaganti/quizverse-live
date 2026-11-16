@@ -72,9 +72,10 @@ class TournamentError(Exception):
 class TournamentService:
     """Core domain service for tournament creation, registration, brackets, and match orchestration."""
 
-    def __init__(self, database: Database, engine: Any | None = None) -> None:
+    def __init__(self, database: Database, engine: Any | None = None, notification_service: Any = None) -> None:
         self._database = database
         self._engine = engine
+        self.notification_service = notification_service
         self._match_rooms: dict[str, str] = {}  # tournament_match_id -> engine_room_code
 
     @property
@@ -320,6 +321,19 @@ class TournamentService:
             self._record_audit_event(
                 session, tournament_id, player_id, "player_registered", None,
                 {"slot": current_count + 1, "capacity": tournament.capacity},
+            )
+            tourn_title = tournament.name
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                player_id,
+                "tournament_registration_confirmed",
+                "Tournament Registration Confirmed",
+                f"You have registered for {tourn_title}.",
+                target_type="tournament",
+                target_id=tournament_id,
+                deduplication_key=f"tourn_reg:{tournament_id}:{player_id}",
+                source_event_id=tournament_id,
             )
 
         return self._participant_view(participant, player)
@@ -773,6 +787,57 @@ class TournamentService:
                     session, match.tournament_id, None, "match_completed", "Match won and winner advanced",
                     {"match_id": tournament_match_id, "winner_id": winner_id, "round": current_round_num},
                 )
+
+            tourn_title = tournament.name
+            tourn_id = match.tournament_id
+            is_final = current_round_num >= total_rounds
+
+            if self.notification_service is not None and winner_id and loser_id:
+                if is_final:
+                    self.notification_service.create_notification(
+                        winner_id,
+                        "new_trophy",
+                        "🏆 Tournament Champion!",
+                        f"Congratulations! You won the championship in {tourn_title}!",
+                        target_type="tournament",
+                        target_id=tourn_id,
+                        metadata={"tournament_id": tourn_id, "title": tourn_title, "tier": "gold"},
+                        deduplication_key=f"tourn_champ:{tourn_id}:{winner_id}",
+                        source_event_id=tourn_id,
+                    )
+                    self.notification_service.create_notification(
+                        loser_id,
+                        "new_trophy",
+                        "🥈 Tournament Runner-Up!",
+                        f"Great run! You finished as Runner-Up in {tourn_title}!",
+                        target_type="tournament",
+                        target_id=tourn_id,
+                        metadata={"tournament_id": tourn_id, "title": tourn_title, "tier": "silver"},
+                        deduplication_key=f"tourn_runner:{tourn_id}:{loser_id}",
+                        source_event_id=tourn_id,
+                    )
+                else:
+                    self.notification_service.create_notification(
+                        winner_id,
+                        "tournament_advanced",
+                        "Tournament Match Won",
+                        f"You won your match and advanced to the next round in {tourn_title}!",
+                        target_type="tournament",
+                        target_id=tourn_id,
+                        deduplication_key=f"tourn_adv:{tournament_match_id}:{winner_id}",
+                        source_event_id=tournament_match_id,
+                    )
+                    self.notification_service.create_notification(
+                        loser_id,
+                        "tournament_eliminated",
+                        "Tournament Match Result",
+                        f"You have been eliminated from {tourn_title}.",
+                        target_type="tournament",
+                        target_id=tourn_id,
+                        deduplication_key=f"tourn_elim:{tournament_match_id}:{loser_id}",
+                        source_event_id=tournament_match_id,
+                    )
+
             return True
         else:
             # Tie policy: mark match as disputed / tiebreak pending

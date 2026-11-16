@@ -72,11 +72,13 @@ class InvitationService:
         friend_service: FriendService,
         block_service: BlockService,
         presence_service: PresenceService | None = None,
+        notification_service: Any = None,
     ) -> None:
         self._database = database
         self._friend_service = friend_service
         self._block_service = block_service
         self.presence_service = presence_service
+        self.notification_service = notification_service
 
     async def create_invitation(
         self,
@@ -196,6 +198,21 @@ class InvitationService:
         if self.presence_service is not None:
             asyncio.create_task(
                 self.presence_service.send_invitation_notification(recipient_id, notification_payload)
+            )
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                recipient_id,
+                "room_invitation_received",
+                "Game Room Invitation",
+                f"{inviter_name} invited you to play {room_meta['mode'].title()} (Room {clean_code}).",
+                actor_id=inviter_id,
+                target_type="room_invitation",
+                target_id=invitation.id,
+                metadata={"room_code": clean_code, "mode": room_meta["mode"]},
+                deduplication_key=f"room_inv:{invitation.id}",
+                source_event_id=invitation.id,
+                expires_in_days=30,
             )
 
         return {
@@ -342,6 +359,21 @@ class InvitationService:
             inv.admission_ticket_hash = ticket_hash
             inv.ticket_expires_at = ticket_expires
             inv.ticket_used_at = None
+            inviter_id = inv.inviter_id
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                inviter_id,
+                "room_invitation_accepted",
+                "Room Invitation Accepted",
+                f"Your game room invitation to Room {room_code} was accepted.",
+                actor_id=invitee_id,
+                target_type="room_invitation",
+                target_id=invitation_id,
+                metadata={"room_code": room_code},
+                deduplication_key=f"room_inv_acc:{invitation_id}",
+                source_event_id=invitation_id,
+            )
 
         return {
             "invitation_id": invitation_id,
@@ -433,6 +465,21 @@ class InvitationService:
 
             inv.status = "declined"
             inv.responded_at = now
+            inviter_id = inv.inviter_id
+            room_code = inv.room_code
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                inviter_id,
+                "room_invitation_declined",
+                "Room Invitation Declined",
+                f"Your game room invitation to Room {room_code} was declined.",
+                actor_id=invitee_id,
+                target_type="room_invitation",
+                target_id=invitation_id,
+                deduplication_key=f"room_inv_dec:{invitation_id}",
+                source_event_id=invitation_id,
+            )
 
         return {"invitation_id": invitation_id, "status": "declined"}
 
@@ -478,11 +525,13 @@ class RematchService:
         friend_service: FriendService,
         block_service: BlockService,
         presence_service: PresenceService | None = None,
+        notification_service: Any = None,
     ) -> None:
         self._database = database
         self._friend_service = friend_service
         self._block_service = block_service
         self.presence_service = presence_service
+        self.notification_service = notification_service
 
     async def create_challenge(
         self,
@@ -601,6 +650,21 @@ class RematchService:
         if self.presence_service is not None:
             asyncio.create_task(
                 self.presence_service.send_rematch_notification(opponent_id, notification_payload)
+            )
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                opponent_id,
+                "rematch_challenge_received",
+                "Rematch Challenge",
+                f"{challenger_name} challenged you to a rematch in {match.mode.title()}!",
+                actor_id=challenger_id,
+                target_type="rematch_challenge",
+                target_id=challenge.id,
+                metadata={"mode": match.mode, "original_match_id": original_match_id},
+                deduplication_key=f"rematch:{challenge.id}",
+                source_event_id=challenge.id,
+                expires_in_days=30,
             )
 
         return {
@@ -769,6 +833,20 @@ class RematchService:
                 )
             )
 
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                challenger_id,
+                "rematch_challenge_accepted",
+                "Rematch Accepted",
+                f"{opponent_name} accepted your rematch challenge!",
+                actor_id=opponent_id,
+                target_type="rematch_challenge",
+                target_id=challenge_id,
+                metadata={"room_code": new_room_code, "mode": mode},
+                deduplication_key=f"rematch_acc:{challenge_id}",
+                source_event_id=challenge_id,
+            )
+
         return {
             "challenge_id": challenge_id,
             "status": "accepted",
@@ -792,6 +870,20 @@ class RematchService:
 
             chal.status = "declined"
             chal.responded_at = now
+            challenger_id = chal.challenger_id
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                challenger_id,
+                "rematch_challenge_declined",
+                "Rematch Declined",
+                "Your rematch challenge was declined.",
+                actor_id=opponent_id,
+                target_type="rematch_challenge",
+                target_id=challenge_id,
+                deduplication_key=f"rematch_dec:{challenge_id}",
+                source_event_id=challenge_id,
+            )
 
         return {"challenge_id": challenge_id, "status": "declined"}
 

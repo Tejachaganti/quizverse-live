@@ -76,6 +76,11 @@ from quizverse.persistence.invitations import InvitationService, RematchService
 from quizverse.invitations_api import install_invitations_api
 from quizverse.persistence.messaging import MessagingService
 from quizverse.messaging_api import install_messaging_api
+from quizverse.persistence.notifications import (
+    NotificationService,
+    SocialIntelligenceService,
+)
+from quizverse.notification_api import install_notification_api
 from quizverse.persistence.player_identity import ProcessRateLimiter
 
 MAX_MESSAGE_BYTES = 4096
@@ -342,6 +347,24 @@ def create_app(
         friend_service=friend_service,
         block_service=block_service,
     )
+    notification_service = NotificationService(
+        database=persistence,
+        block_service=block_service,
+        friend_service=friend_service,
+        presence_service=presence_service,
+    )
+    social_intelligence_service = SocialIntelligenceService(
+        database=persistence,
+        friend_service=friend_service,
+        block_service=block_service,
+        presence_service=presence_service,
+    )
+    friend_service.notification_service = notification_service
+    invitation_service.notification_service = notification_service
+    rematch_service.notification_service = notification_service
+    messaging_service.notification_service = notification_service
+    tournament_service.notification_service = notification_service
+    league_service.notification_service = notification_service
     hub.invitation_ticket_validator = invitation_service.validate_and_consume_ticket
 
     def _on_friendship_severed(p1: str, p2: str) -> None:
@@ -361,6 +384,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        presence_service.loop = asyncio.get_running_loop()
         try:
             reconciled_match_ids = await asyncio.to_thread(match_history.rating_service.reconcile_unrated_matches)
             if reconciled_match_ids:
@@ -406,6 +430,8 @@ def create_app(
     app.state.invitation_service = invitation_service
     app.state.rematch_service = rematch_service
     app.state.messaging_service = messaging_service
+    app.state.notification_service = notification_service
+    app.state.social_intelligence_service = social_intelligence_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
@@ -418,6 +444,7 @@ def create_app(
     install_presence_api(app, presence_service, presence_tickets, player_identities)
     install_invitations_api(app, invitation_service, rematch_service, player_identities, active_engine)
     install_messaging_api(app, messaging_service, player_identities, presence_service)
+    install_notification_api(app, notification_service, social_intelligence_service, player_identities, presence_service)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:

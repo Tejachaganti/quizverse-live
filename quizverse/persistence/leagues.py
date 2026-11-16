@@ -103,9 +103,10 @@ class LeagueError(Exception):
 class LeagueService:
     """Domain service for competitive leagues, seasons, round-robin fixtures, and standings."""
 
-    def __init__(self, database: Database, engine: Any | None = None) -> None:
+    def __init__(self, database: Database, engine: Any | None = None, notification_service: Any = None) -> None:
         self._database = database
         self._engine = engine
+        self.notification_service = notification_service
         self._fixture_rooms: dict[str, str] = {}  # fixture_id -> engine_room_code
 
     @property
@@ -452,6 +453,19 @@ class LeagueService:
             self._record_audit_event(
                 session, season_id, player_id, "player_registered", "Player registered for season",
                 {"player_id": player_id, "display_name": player.display_name},
+            )
+            season_title = season.name
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                player_id,
+                "league_registration_confirmed",
+                "League Registration Confirmed",
+                f"You have registered for {season_title}.",
+                target_type="league",
+                target_id=season_id,
+                deduplication_key=f"league_reg:{season_id}:{player_id}",
+                source_event_id=season_id,
             )
 
         return {"registered": True, "season_id": season_id, "player_id": player_id}

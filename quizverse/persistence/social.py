@@ -168,12 +168,14 @@ class FriendService:
         rating_service: RatingService | None = None,
         presence_provider: Callable[[str], str] | None = None,
         on_friendship_severed: Callable[[str, str], Any] | None = None,
+        notification_service: Any = None,
     ) -> None:
         self._database = database
         self._block_service = block_service
         self._rating_service = rating_service or RatingService(database)
         self.presence_provider = presence_provider
         self.on_friendship_severed = on_friendship_severed
+        self.notification_service = notification_service
 
     def are_friends(self, p1: str, p2: str, session=None) -> bool:
         if p1 == p2:
@@ -194,10 +196,19 @@ class FriendService:
         if sender_id == recipient_id:
             raise SocialError("cannot_friend_self", "You cannot send a friend request to yourself.", 400)
 
+        auto_accepted = False
+        sender_name = "Player"
+        recipient_name = "Player"
+
         with self._database.sessions.begin() as session:
+            sender_profile = session.get(PlayerProfile, sender_id)
+            if sender_profile:
+                sender_name = sender_profile.display_name
+
             recipient = session.get(PlayerProfile, recipient_id)
             if recipient is None or recipient.status != "active":
                 raise SocialError("player_not_found", "The specified player profile was not found or is inactive.", 404)
+            recipient_name = recipient.display_name
 
             # Block check
             if self._block_service.is_blocked(sender_id, recipient_id, session=session):
@@ -240,7 +251,8 @@ class FriendService:
                         created_at=now,
                     )
                 )
-                return {
+                auto_accepted = True
+                result_payload = {
                     "request_id": reverse_pending.id,
                     "status": "accepted",
                     "friendship_created": True,
@@ -248,25 +260,62 @@ class FriendService:
                     "recipient_name": recipient.display_name,
                     "created_at": now,
                 }
+            else:
+                # Create new pending friend request
+                request_row = FriendRequest(
+                    id=secrets.token_hex(16),
+                    sender_id=sender_id,
+                    recipient_id=recipient_id,
+                    status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(request_row)
+                result_payload = {
+                    "request_id": request_row.id,
+                    "status": "pending",
+                    "friendship_created": False,
+                    "recipient_id": recipient_id,
+                    "recipient_name": recipient.display_name,
+                    "created_at": now,
+                }
 
-            # Create new pending friend request
-            request_row = FriendRequest(
-                id=secrets.token_hex(16),
-                sender_id=sender_id,
-                recipient_id=recipient_id,
-                status="pending",
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(request_row)
-            return {
-                "request_id": request_row.id,
-                "status": "pending",
-                "friendship_created": False,
-                "recipient_id": recipient_id,
-                "recipient_name": recipient.display_name,
-                "created_at": now,
-            }
+        if self.notification_service is not None:
+            if auto_accepted:
+                self.notification_service.create_notification(
+                    recipient_id,
+                    "friend_request_accepted",
+                    "Friend Request Accepted",
+                    f"{sender_name} accepted your friend request.",
+                    actor_id=sender_id,
+                    target_type="friend",
+                    target_id=sender_id,
+                    deduplication_key=f"friend_acc:{sender_id}:{recipient_id}",
+                )
+                self.notification_service.create_notification(
+                    sender_id,
+                    "friend_request_accepted",
+                    "Friend Request Accepted",
+                    f"You and {recipient_name} are now friends.",
+                    actor_id=recipient_id,
+                    target_type="friend",
+                    target_id=recipient_id,
+                    deduplication_key=f"friend_acc:{recipient_id}:{sender_id}",
+                )
+            else:
+                self.notification_service.create_notification(
+                    recipient_id,
+                    "friend_request_received",
+                    "Friend Request Received",
+                    f"{sender_name} sent you a friend request.",
+                    actor_id=sender_id,
+                    target_type="friend_request",
+                    target_id=result_payload["request_id"],
+                    deduplication_key=f"friend_req:{result_payload['request_id']}",
+                    source_event_id=result_payload["request_id"],
+                )
+
+        return result_payload
 
     def accept_request(self, request_id: str, recipient_id: str) -> dict[str, Any]:
         with self._database.sessions.begin() as session:
@@ -319,13 +368,32 @@ class FriendService:
             )
 
             sender = session.get(PlayerProfile, req.sender_id)
-            return {
+            sender_name = sender.display_name if sender else "Player"
+            recipient = session.get(PlayerProfile, recipient_id)
+            recipient_name = recipient.display_name if recipient else "Player"
+            req_sender_id = req.sender_id
+
+            accepted_payload = {
                 "request_id": req.id,
                 "status": "accepted",
                 "friend_id": req.sender_id,
-                "friend_name": sender.display_name if sender else "Player",
+                "friend_name": sender_name,
                 "accepted_at": now,
             }
+
+        if self.notification_service is not None:
+            self.notification_service.create_notification(
+                req_sender_id,
+                "friend_request_accepted",
+                "Friend Request Accepted",
+                f"{recipient_name} accepted your friend request.",
+                actor_id=recipient_id,
+                target_type="friend",
+                target_id=recipient_id,
+                deduplication_key=f"friend_acc:{recipient_id}:{req_sender_id}",
+            )
+
+        return accepted_payload
 
     def reject_request(self, request_id: str, recipient_id: str) -> dict[str, Any]:
         with self._database.sessions.begin() as session:

@@ -184,6 +184,7 @@ def _run_presence_checks(browser, origin: str) -> None:
     page_c.locator('[data-action="profile-create"]').click()
     expect(page_c.locator(".profile-card h1")).to_contain_text("PresCharlie")
     page_c.get_by_role("button", name="Social").click()
+    page_c.locator('.social-nav [data-tab="friends"]').click()
     expect(page_c.locator(".social-empty-state")).to_contain_text("No Friends Yet")
 
     # 7. Player Alpha enters Lobby (creates room) -> Beta sees In Lobby
