@@ -1171,6 +1171,161 @@ class NotificationPreference(Base):
     player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
 
 
+# =============================================================================
+# STAGE 10: AI INTELLIGENCE & PERSONALIZED LEARNING MODELS
+# =============================================================================
+
+class QuestionQualityAssessment(Base):
+    """Quality and validation assessment record for quiz questions."""
+
+    __tablename__ = "question_quality_assessments"
+    __table_args__ = (
+        Index("ix_qqa_question_id", "question_id"),
+        Index("ix_qqa_quiz_id", "quiz_id"),
+        Index("ix_qqa_prompt_hash", "prompt_hash"),
+        Index("ix_qqa_validation_status", "validation_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    question_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    quiz_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=True)
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    clarity_score: Mapped[float] = mapped_column(Float, nullable=False)
+    ambiguity_score: Mapped[float] = mapped_column(Float, nullable=False)
+    answer_consistency_score: Mapped[float] = mapped_column(Float, nullable=False)
+    explanation_score: Mapped[float] = mapped_column(Float, nullable=False)
+    duplicate_risk: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    difficulty_confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    topic_relevance: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    validation_status: Mapped[str] = mapped_column(String(32), default="validated", nullable=False)
+    review_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    issues_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    improvements_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assessed_by: Mapped[str] = mapped_column(String(32), default="deterministic", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class PlayerTopicPerformance(Base):
+    """Aggregated performance metrics per player and topic."""
+
+    __tablename__ = "player_topic_performances"
+    __table_args__ = (
+        Index("ix_player_topic_perf_player", "player_id"),
+        UniqueConstraint("player_id", "category_id", "difficulty", name="uq_player_topic_perf"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    category_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correct_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    accuracy_pct: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    avg_response_time_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="insufficient_data", nullable=False)
+    trend: Mapped[str] = mapped_column(String(32), default="stable", nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class PlayerLearningPath(Base):
+    """Personalized learning roadmap generated for an authenticated player."""
+
+    __tablename__ = "player_learning_paths"
+    __table_args__ = (
+        Index("ix_player_learning_paths_player", "player_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    target_category: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    recommended_difficulty: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    progress_pct: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    total_steps: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completed_steps: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    estimated_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    steps: Mapped[list[LearningPathStep]] = relationship(back_populates="path", cascade="all, delete-orphan", order_by="LearningPathStep.step_number")
+
+
+class LearningPathStep(Base):
+    """Discrete learning activity within a personalized learning path."""
+
+    __tablename__ = "learning_path_steps"
+    __table_args__ = (
+        Index("ix_learning_path_steps_path", "path_id"),
+        UniqueConstraint("path_id", "step_number", name="uq_learning_path_step"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    path_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_learning_paths.id", ondelete="CASCADE"), nullable=False)
+    step_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    activity_type: Mapped[str] = mapped_column(String(32), default="quiz_practice", nullable=False)
+    target_quiz_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("quizzes.id", ondelete="SET NULL"), nullable=True)
+    target_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    target_difficulty: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    estimated_minutes: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    path: Mapped[PlayerLearningPath] = relationship(back_populates="steps")
+
+
+class PlayerLearningReport(Base):
+    """Persisted learning report providing holistic player intelligence."""
+
+    __tablename__ = "player_learning_reports"
+    __table_args__ = (
+        Index("ix_player_learning_reports_player", "player_id"),
+        Index("ix_player_learning_reports_created", "player_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    report_type: Mapped[str] = mapped_column(String(32), default="comprehensive", nullable=False)
+    time_window: Mapped[str] = mapped_column(String(32), default="recent", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    data_json: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_by: Mapped[str] = mapped_column(String(32), default="deterministic", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class QuizRecommendationRecord(Base):
+    """Persisted personalized quiz recommendation with rationale."""
+
+    __tablename__ = "quiz_recommendation_records"
+    __table_args__ = (
+        Index("ix_quiz_rec_player", "player_id"),
+        Index("ix_quiz_rec_quiz", "quiz_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    quiz_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=True)
+    quiz_title: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(32), default="medium", nullable=False)
+    reason_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_text: Mapped[str] = mapped_column(Text, nullable=False)
+    score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+
 
 
 

@@ -138,6 +138,19 @@
     notifPreferences: null,
     notifPreferencesOpen: false,
     socialOverview: null,
+    intelligenceTab: 'overview',
+    intelligenceOverview: null,
+    intelligencePerformance: null,
+    intelligenceTimeWindow: 'recent',
+    intelligenceWeaknesses: null,
+    intelligenceDifficulty: null,
+    intelligenceLearningPath: null,
+    intelligenceRecommendations: [],
+    intelligenceReports: [],
+    intelligenceSelectedReport: null,
+    intelligenceQuestionAnalysis: null,
+    intelligenceLoading: false,
+    intelligenceError: '',
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -3454,8 +3467,762 @@
     `;
   }
 
+  
+  async function refreshIntelligence(renderBeforeFetch = true) {
+    if (!state.profileCredential) {
+      state.intelligenceError = 'Sign in or link a player profile to access AI intelligence.';
+      render();
+      return;
+    }
+    state.intelligenceLoading = true;
+    state.intelligenceError = '';
+    if (renderBeforeFetch) render();
+    try {
+      const [overviewRes, weaknessesRes, diffRes, pathsRes, recsRes, perfRes, reportsRes] = await Promise.all([
+        playerApi('/api/intelligence/overview'),
+        playerApi('/api/intelligence/weaknesses'),
+        playerApi('/api/intelligence/difficulty'),
+        playerApi('/api/intelligence/learning-paths'),
+        playerApi('/api/intelligence/recommendations'),
+        playerApi(`/api/intelligence/performance?time_window=${encodeURIComponent(state.intelligenceTimeWindow || 'recent')}`),
+        playerApi('/api/intelligence/reports?limit=5'),
+      ]);
+      if (overviewRes && overviewRes.response.ok) state.intelligenceOverview = overviewRes.data;
+      if (weaknessesRes && weaknessesRes.response.ok) state.intelligenceWeaknesses = weaknessesRes.data;
+      if (diffRes && diffRes.response.ok) state.intelligenceDifficulty = diffRes.data;
+      if (pathsRes && pathsRes.response.ok) state.intelligenceLearningPath = pathsRes.data.active_path;
+      if (recsRes && recsRes.response.ok) state.intelligenceRecommendations = recsRes.data.recommendations || [];
+      if (perfRes && perfRes.response.ok) state.intelligencePerformance = perfRes.data;
+      if (reportsRes && reportsRes.response.ok) {
+        state.intelligenceReports = reportsRes.data.reports || [];
+        if (!state.intelligenceSelectedReport && state.intelligenceReports.length > 0) {
+          state.intelligenceSelectedReport = state.intelligenceReports[0];
+        }
+      }
+    } catch (err) {
+      state.intelligenceError = err.message || 'Failed to load AI intelligence data.';
+    } finally {
+      state.intelligenceLoading = false;
+      render();
+    }
+  }
+
+  function renderIntelOverview() {
+    const ov = state.intelligenceOverview || {};
+    const sum = ov.summary || {};
+    const diff = state.intelligenceDifficulty || {};
+    const path = state.intelligenceLearningPath;
+    const topRec = (state.intelligenceRecommendations && state.intelligenceRecommendations.length > 0) ? state.intelligenceRecommendations[0] : null;
+    const weaknesses = state.intelligenceWeaknesses || {};
+    const topWeak = (weaknesses.weak_topics && weaknesses.weak_topics.length > 0) ? weaknesses.weak_topics[0] : null;
+
+    return `
+      <div class="intel-grid">
+        <div class="intel-card">
+          <h3>⚡ AI Mastery Status</h3>
+          <div style="font-size: 1.8rem; font-weight: 800; color: #fff; margin: 0.25rem 0;">${escapeHtml(sum.mastery_level || 'Apprentice')}</div>
+          <div class="intel-card-desc">
+            Evaluated <strong>${sum.total_questions_answered || 0}</strong> questions with <strong>${Math.round(sum.overall_accuracy || 0)}%</strong> overall accuracy.
+          </div>
+          <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <span class="intel-stat-badge intel-badge-strong">🎯 ${Math.round(sum.overall_accuracy || 0)}% Accuracy</span>
+            <span class="intel-stat-badge intel-badge-diff">📚 ${sum.total_topics_tracked || 0} Topics</span>
+          </div>
+        </div>
+
+        <div class="intel-card">
+          <h3>🎯 Adaptive Difficulty</h3>
+          <div class="intel-card-desc">Real-time match difficulty recommendation tailored to your performance threshold.</div>
+          <div style="margin: 0.4rem 0;">
+            <div style="font-size: 0.82rem; color: #8e91b5;">Current: <strong style="color: #fff; text-transform: uppercase;">${escapeHtml(diff.current_difficulty || state.preferences?.difficulty || 'medium')}</strong></div>
+            <div style="font-size: 1.4rem; font-weight: 800; color: #a78bfa; text-transform: uppercase;">${escapeHtml(diff.recommended_difficulty || 'medium')}</div>
+            <div style="font-size: 0.78rem; color: #7c5cff;">Confidence: ${Math.round((diff.confidence || 0) * 100)}%</div>
+          </div>
+          <button class="btn btn-primary" type="button" data-action="intel-tab" data-tab="difficulty">Inspect &amp; Apply →</button>
+        </div>
+
+        <div class="intel-card">
+          <h3>🧭 Active Learning Path</h3>
+          ${path ? `
+            <div style="font-weight: 700; color: #fff; font-size: 0.95rem;">${escapeHtml(path.title)}</div>
+            <div class="intel-card-desc">Topic: <strong>${escapeHtml(path.topic)}</strong> (${escapeHtml(path.target_difficulty)})</div>
+            <div style="margin: 0.5rem 0;">
+              <div class="topic-progress-bg">
+                <div class="topic-progress-fill topic-fill-strong" style="width: ${Math.min(100, Math.max(0, path.progress_percent || 0))}%;"></div>
+              </div>
+              <div style="font-size: 0.76rem; color: #8587a8; margin-top: 0.25rem;">${Math.round(path.progress_percent || 0)}% Complete</div>
+            </div>
+            <button class="btn btn-primary" type="button" data-action="intel-tab" data-tab="paths">Continue Path →</button>
+          ` : `
+            <div class="intel-card-desc">No active path right now. Generate an AI-structured step-by-step learning progression.</div>
+            <button class="btn btn-primary" style="margin-top: auto;" type="button" data-action="regenerate-path">Generate Learning Path</button>
+          `}
+        </div>
+
+        <div class="intel-card">
+          <h3>💡 Top Recommendation</h3>
+          ${topRec ? `
+            <div style="font-weight: 700; color: #fff; font-size: 0.95rem;">${escapeHtml(topRec.title)}</div>
+            <div class="rec-reason" style="margin: 0.25rem 0;">${escapeHtml(topRec.reason)}</div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto;">
+              <span class="intel-stat-badge intel-badge-diff">${Math.round(topRec.match_score * 100)}% Match</span>
+              <button class="btn btn-primary" type="button" data-action="start-rec-quiz" data-category="${escapeHtml(topRec.category)}" data-difficulty="${escapeHtml(topRec.difficulty)}">Practice Now</button>
+            </div>
+          ` : `
+            <div class="intel-card-desc">Complete a few quizzes to reveal personalized intelligent recommendations.</div>
+            <button class="btn btn-secondary" style="margin-top: auto;" type="button" data-action="intel-tab" data-tab="recommendations">Explore All</button>
+          `}
+        </div>
+      </div>
+
+      ${topWeak ? `
+        <div class="intel-card" style="border-left: 4px solid #ef4444; background: linear-gradient(135deg, #1f1424, #14162e);">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <div>
+              <strong style="color: #f87171; font-size: 0.95rem;">Growth Opportunity Detected: ${escapeHtml(topWeak.topic)}</strong>
+              <div style="font-size: 0.82rem; color: #b2b5dc; margin-top: 0.2rem;">
+                Accuracy is currently ${Math.round(topWeak.accuracy)}% across ${topWeak.attempts} questions. Strengthen this weak topic with targeted practice.
+              </div>
+            </div>
+            <button class="btn btn-primary" type="button" data-action="start-rec-quiz" data-category="${escapeHtml(topWeak.topic)}" data-difficulty="easy">Strengthen Topic</button>
+          </div>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  function renderIntelTopics() {
+    const weaknesses = state.intelligenceWeaknesses || {};
+    const strong = weaknesses.strong_topics || [];
+    const weak = weaknesses.weak_topics || [];
+    const improving = weaknesses.improving_topics || [];
+    const declining = weaknesses.declining_topics || [];
+
+    const renderTopicItem = (t, statusClass, badgeClass, label) => `
+      <div class="topic-item">
+        <div class="topic-header">
+          <span class="topic-title">${escapeHtml(t.topic)}</span>
+          <span class="intel-stat-badge ${badgeClass}">${label} (${Math.round(t.accuracy)}%)</span>
+        </div>
+        <div class="topic-meta" style="margin-bottom: 0.4rem;">
+          ${t.attempts} attempts &bull; Avg response: ${Number(t.avg_answer_time_seconds || 0).toFixed(1)}s &bull; Trend: <strong>${escapeHtml(t.trend || 'stable')}</strong>
+        </div>
+        <div class="topic-progress-bg">
+          <div class="topic-progress-fill ${statusClass}" style="width: ${Math.min(100, Math.max(5, t.accuracy))}%;"></div>
+        </div>
+      </div>
+    `;
+
+    return `
+      <div class="intel-grid" style="grid-template-columns: 1fr 1fr;">
+        <div class="intel-card">
+          <h3>🌟 Mastery Strengths (${strong.length})</h3>
+          <div class="intel-card-desc">Topics where you have achieved high consistency (accuracy &ge; 75%).</div>
+          <div class="topic-list" style="margin-top: 0.5rem;">
+            ${strong.length > 0 ? strong.map(t => renderTopicItem(t, 'topic-fill-strong', 'intel-badge-strong', 'Strong')).join('') : '<div class="intel-card-desc">No strong mastery topics yet. Keep practicing!</div>'}
+          </div>
+        </div>
+
+        <div class="intel-card">
+          <h3>⚠️ Focus &amp; Growth Areas (${weak.length})</h3>
+          <div class="intel-card-desc">Topics below target mastery (accuracy &lt; 60%) where targeted drills will accelerate improvement.</div>
+          <div class="topic-list" style="margin-top: 0.5rem;">
+            ${weak.length > 0 ? weak.map(t => renderTopicItem(t, 'topic-fill-weak', 'intel-badge-weak', 'Needs Practice')).join('') : '<div class="intel-card-desc">No weak topics identified! You are performing well across all categories.</div>'}
+          </div>
+        </div>
+      </div>
+
+      <div class="intel-card" style="margin-top: 1rem;">
+        <h3>📈 Performance Trajectory</h3>
+        <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
+          <div style="flex: 1; min-width: 250px;">
+            <h4 style="color: #4ade80; font-size: 0.9rem; margin-bottom: 0.4rem;">🚀 Improving Topics</h4>
+            ${improving.length > 0 ? improving.map(t => `<div style="font-size: 0.84rem; color: #d1d5db; padding: 0.2rem 0;">&bull; <strong>${escapeHtml(t.topic)}</strong> (+${Math.round(t.recent_accuracy - t.accuracy)}% recent boost)</div>`).join('') : '<div style="font-size: 0.8rem; color: #8587a8;">No trending improvement data yet.</div>'}
+          </div>
+          <div style="flex: 1; min-width: 250px;">
+            <h4 style="color: #f87171; font-size: 0.9rem; margin-bottom: 0.4rem;">📉 Declining Topics</h4>
+            ${declining.length > 0 ? declining.map(t => `<div style="font-size: 0.84rem; color: #d1d5db; padding: 0.2rem 0;">&bull; <strong>${escapeHtml(t.topic)}</strong> (${Math.round(t.recent_accuracy - t.accuracy)}% recent drop)</div>`).join('') : '<div style="font-size: 0.8rem; color: #8587a8;">No declining trends detected. Excellent stability!</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderIntelDifficulty() {
+    const diff = state.intelligenceDifficulty || {};
+    const cur = diff.current_difficulty || state.preferences?.difficulty || 'medium';
+    const rec = diff.recommended_difficulty || 'medium';
+    const isDifferent = cur.toLowerCase() !== rec.toLowerCase();
+
+    return `
+      <div class="intel-card">
+        <div class="diff-hero">
+          <div class="diff-badge-current">CURRENT SOLO DIFFICULTY: <strong style="color: #fff; text-transform: uppercase;">${escapeHtml(cur)}</strong></div>
+          <div class="diff-badge-recommended" style="color: ${rec === 'hard' ? '#f87171' : rec === 'easy' ? '#4ade80' : '#a78bfa'};">${escapeHtml(rec)}</div>
+          <div style="font-size: 0.88rem; color: #9497bc;">Recommendation Confidence: <strong>${Math.round((diff.confidence || 0) * 100)}%</strong></div>
+
+          <div class="diff-reason-box">
+            ${escapeHtml(diff.reason || 'Difficulty recommendation based on your recent attempt accuracy and question volume.')}
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap; justify-content: center;">
+            <button class="btn btn-primary" type="button" data-action="apply-recommended-diff" data-difficulty="${escapeHtml(rec)}">
+              ✓ Apply Recommended Difficulty (${escapeHtml(rec.toUpperCase())})
+            </button>
+            <button class="btn btn-secondary" type="button" data-action="refresh-intel">↻ Re-evaluate</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="intel-grid" style="margin-top: 1.5rem;">
+        <div class="intel-card">
+          <h3>⚖️ Adaptive Promotion Thresholds</h3>
+          <div class="intel-card-desc">How QuizVerse AI calculates solo practice difficulty adaptations:</div>
+          <ul style="font-size: 0.82rem; color: #b2b5dc; line-height: 1.6; padding-left: 1.2rem; margin: 0.5rem 0;">
+            <li><strong>Promotion to Hard:</strong> &ge; 80% accuracy across at least 3 attempts.</li>
+            <li><strong>Maintenance:</strong> 50% to 79% accuracy maintains optimal challenge level.</li>
+            <li><strong>Demotion to Easy:</strong> &lt; 50% accuracy reduces difficulty to rebuild mastery.</li>
+            <li><strong>Evidence Requirement:</strong> At least 3 question attempts required before triggering difficulty promotion or demotion.</li>
+          </ul>
+        </div>
+
+        <div class="intel-card">
+          <h3>🔒 Fair Competitive Boundaries</h3>
+          <div class="intel-card-desc">Safety &amp; Integrity Guarantees:</div>
+          <div style="font-size: 0.82rem; color: #b2b5dc; line-height: 1.5; margin-top: 0.5rem;">
+            Adaptive difficulty is strictly scoped to <strong>Solo Practice</strong> and personalized learning paths.
+            Multiplayer rooms, ranked fixture matches, and tournament brackets remain 100% standardized and authoritative.
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderIntelPath() {
+    const path = state.intelligenceLearningPath;
+
+    if (!path) {
+      return `
+        <div class="intel-card" style="text-align: center; padding: 2.5rem 1rem;">
+          <h2 style="justify-content: center;">🧭 Personalized Learning Paths</h2>
+          <p class="intel-card-desc" style="max-width: 500px; margin: 0.5rem auto 1.5rem;">
+            QuizVerse AI synthesizes your weak topics, recent accuracy, and difficulty progression into a 4-stage mastery curriculum.
+          </p>
+          <button class="btn btn-primary" type="button" data-action="regenerate-path">Generate New Learning Path</button>
+        </div>
+      `;
+    }
+
+    const steps = path.steps || [];
+    const completedCount = steps.filter(s => s.status === 'completed' || s.is_completed).length;
+    const progressVal = Number(path.progress_pct ?? path.progress_percent ?? (steps.length ? (completedCount / steps.length * 100) : 0)) || 0;
+
+    return `
+      <div class="intel-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+          <div>
+            <h2 style="font-size: 1.3rem;">${escapeHtml(path.title)}</h2>
+            <div class="intel-card-desc" style="margin-top: 0.25rem;">
+              Focus Topic: <strong style="color: #fff;">${escapeHtml(path.topic || path.target_category || 'General Knowledge')}</strong> &bull; Target: <strong style="color: #a78bfa; text-transform: uppercase;">${escapeHtml(path.target_difficulty || path.recommended_difficulty || 'medium')}</strong>
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" type="button" data-action="regenerate-path">↻ Regenerate</button>
+          </div>
+        </div>
+
+        <div style="margin: 1rem 0;">
+          <div style="display: flex; justify-content: space-between; font-size: 0.8rem; color: #8587a8; margin-bottom: 0.35rem;">
+            <span>Curriculum Progress (${completedCount} of ${steps.length} Steps)</span>
+            <span style="font-weight: 700; color: #fff;">${Math.round(progressVal)}%</span>
+          </div>
+          <div class="topic-progress-bg">
+            <div class="topic-progress-fill topic-fill-strong" style="width: ${Math.min(100, Math.max(0, progressVal))}%;"></div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.85rem; margin-top: 0.5rem;">
+          ${steps.map((s, idx) => {
+            const isCompleted = s.status === 'completed' || s.is_completed;
+            const isCurrent = !isCompleted && (idx === 0 || (steps[idx - 1].status === 'completed' || steps[idx - 1].is_completed));
+            return `
+              <div class="path-step-card ${isCompleted ? 'completed' : ''}">
+                <div class="path-step-num">${isCompleted ? '✓' : (idx + 1)}</div>
+                <div class="path-step-body">
+                  <div class="path-step-title">${escapeHtml(s.title)}</div>
+                  <div class="path-step-desc">${escapeHtml(s.description)}</div>
+                  <div style="font-size: 0.74rem; color: #7c5cff; margin-top: 0.25rem; text-transform: uppercase; font-weight: 700;">
+                    Stage: ${escapeHtml(s.step_type || s.activity_type || 'practice')}
+                  </div>
+                  <div class="path-step-actions">
+                    ${isCompleted ? `
+                      <span class="intel-stat-badge intel-badge-strong">✓ Completed</span>
+                    ` : `
+                      <button class="btn btn-primary" type="button" data-action="complete-path-step" data-path-id="${path.id}" data-step-id="${s.id}">
+                        Mark Step as Completed
+                      </button>
+                      <button class="btn btn-secondary" type="button" data-action="start-rec-quiz" data-category="${escapeHtml(path.topic || path.target_category || 'General Knowledge')}" data-difficulty="${escapeHtml(path.target_difficulty || path.recommended_difficulty || 'medium')}">
+                        Practice Questions
+                      </button>
+                    `}
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderIntelRecommendations() {
+    const recs = state.intelligenceRecommendations || [];
+
+    if (recs.length === 0) {
+      return `
+        <div class="intel-card" style="text-align: center; padding: 2.5rem 1rem;">
+          <h2 style="justify-content: center;">💡 Personalized Recommendations</h2>
+          <p class="intel-card-desc" style="max-width: 500px; margin: 0.5rem auto 1.5rem;">
+            Play a few solo or multiplayer matches to give QuizVerse AI the performance data needed to suggest personalized study quizzes.
+          </p>
+          <button class="btn btn-primary" type="button" data-action="refresh-intel">↻ Refresh Recommendations</button>
+        </div>
+      `;
+    }
+
+    return `
+      <div style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 0.88rem; color: #9497bc;">Found <strong>${recs.length}</strong> AI-tailored study recommendations.</div>
+        <button class="btn btn-secondary" type="button" data-action="refresh-intel">↻ Refresh</button>
+      </div>
+
+      <div class="intel-grid">
+        ${recs.map(r => `
+          <div class="rec-card">
+            <div class="rec-card-top">
+              <span class="intel-stat-badge intel-badge-diff">${Math.round(r.match_score * 100)}% Match</span>
+              <span class="intel-stat-badge intel-badge-practice" style="text-transform: uppercase;">${escapeHtml(r.difficulty)}</span>
+            </div>
+            <div class="rec-title">${escapeHtml(r.title)}</div>
+            <div style="font-size: 0.8rem; color: #8587a8;">Category: <strong>${escapeHtml(r.category)}</strong> &bull; Mode: <strong>${escapeHtml(r.mode || 'classic')}</strong></div>
+            <div class="rec-reason">${escapeHtml(r.reason)}</div>
+            <div style="margin-top: auto; padding-top: 0.5rem;">
+              <button class="btn btn-primary" style="width: 100%;" type="button" data-action="start-rec-quiz" data-category="${escapeHtml(r.category)}" data-difficulty="${escapeHtml(r.difficulty)}">
+                Practice This Category
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderIntelPerformance() {
+    const perf = state.intelligencePerformance || {};
+    const win = state.intelligenceTimeWindow || 'recent';
+    const accuracy = Math.round(perf.overall_accuracy || 0);
+    const questionsAnswered = perf.questions_answered || 0;
+    const avgTime = Number(perf.avg_answer_time_seconds || 0).toFixed(1);
+    const currStreak = perf.current_streak || 0;
+    const maxStreak = perf.max_streak || 0;
+
+    const diffBreakdown = perf.difficulty_breakdown || {};
+    const modeBreakdown = perf.mode_breakdown || {};
+
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem;">
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+          <button class="intel-tab-btn ${win === 'recent' ? 'active' : ''}" type="button" data-action="set-perf-window" data-window="recent">Recent (Last 10)</button>
+          <button class="intel-tab-btn ${win === '7_days' ? 'active' : ''}" type="button" data-action="set-perf-window" data-window="7_days">Last 7 Days</button>
+          <button class="intel-tab-btn ${win === '30_days' ? 'active' : ''}" type="button" data-action="set-perf-window" data-window="30_days">Last 30 Days</button>
+          <button class="intel-tab-btn ${win === 'all_time' ? 'active' : ''}" type="button" data-action="set-perf-window" data-window="all_time">All Time</button>
+        </div>
+        <button class="btn btn-secondary" type="button" data-action="refresh-intel">↻ Refresh Analytics</button>
+      </div>
+
+      <div class="intel-grid">
+        <div class="intel-card">
+          <h3>🎯 Accuracy</h3>
+          <div style="font-size: 2.2rem; font-weight: 800; color: #4ade80;">${accuracy}%</div>
+          <div class="intel-card-desc">Correct answers across selected window.</div>
+        </div>
+
+        <div class="intel-card">
+          <h3>📝 Questions Evaluated</h3>
+          <div style="font-size: 2.2rem; font-weight: 800; color: #fff;">${questionsAnswered}</div>
+          <div class="intel-card-desc">Total questions answered in this period.</div>
+        </div>
+
+        <div class="intel-card">
+          <h3>⚡ Speed &amp; Precision</h3>
+          <div style="font-size: 2.2rem; font-weight: 800; color: #a78bfa;">${avgTime}s</div>
+          <div class="intel-card-desc">Average response time per question.</div>
+        </div>
+
+        <div class="intel-card">
+          <h3>🔥 Streaks</h3>
+          <div style="font-size: 2.2rem; font-weight: 800; color: #facc15;">${currStreak} <span style="font-size: 1rem; color: #8587a8;">(Max: ${maxStreak})</span></div>
+          <div class="intel-card-desc">Current and peak consecutive correct answers.</div>
+        </div>
+      </div>
+
+      <div class="intel-grid" style="grid-template-columns: 1fr 1fr; margin-top: 1rem;">
+        <div class="intel-card">
+          <h3>📊 Breakdown by Difficulty</h3>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+            ${['easy', 'medium', 'hard'].map(d => {
+              const data = diffBreakdown[d] || { accuracy: 0, attempts: 0 };
+              return `
+                <div>
+                  <div style="display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem;">
+                    <span style="font-weight: 700; text-transform: uppercase;">${d}</span>
+                    <span style="color: #8587a8;">${Math.round(data.accuracy)}% (${data.attempts} questions)</span>
+                  </div>
+                  <div class="topic-progress-bg">
+                    <div class="topic-progress-fill ${data.accuracy >= 75 ? 'topic-fill-strong' : data.accuracy < 50 ? 'topic-fill-weak' : 'topic-fill-practice'}" style="width: ${Math.min(100, Math.max(0, data.accuracy))}%;"></div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="intel-card">
+          <h3>🎮 Breakdown by Game Mode</h3>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+            ${Object.keys(modeBreakdown).length > 0 ? Object.entries(modeBreakdown).map(([mode, data]) => `
+              <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.84rem; padding: 0.35rem 0; border-bottom: 1px solid #1f2240;">
+                <span style="font-weight: 600; text-transform: capitalize;">${escapeHtml(mode.replace('_', ' '))}</span>
+                <span class="intel-stat-badge intel-badge-strong">${Math.round(data.accuracy || 0)}% (${data.attempts || 0} q's)</span>
+              </div>
+            `).join('') : '<div class="intel-card-desc">No match records for this time window.</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderIntelReports() {
+    const reports = state.intelligenceReports || [];
+    const active = state.intelligenceSelectedReport || (reports.length > 0 ? reports[0] : null);
+
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem;">
+        <div>
+          <h2 style="font-size: 1.3rem; margin: 0; color: #fff;">AI Learning Reports</h2>
+          <div style="font-size: 0.82rem; color: #8587a8;">In-depth synthesis of strengths, weaknesses, and personalized study schedules.</div>
+        </div>
+        <button class="btn btn-primary" type="button" data-action="generate-report-btn">
+          ✨ Generate Comprehensive AI Report
+        </button>
+      </div>
+
+      ${reports.length > 0 ? `
+        <div style="display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.5rem; margin-bottom: 1rem;">
+          ${reports.map(r => `
+            <button class="intel-tab-btn ${active && active.id === r.id ? 'active' : ''}" type="button" data-action="select-report" data-report-id="${r.id}">
+              Report ${escapeHtml(r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Recent')} (${escapeHtml(r.time_window || 'recent')})
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      ${active ? `
+        <div class="report-container">
+          <div class="report-header">
+            <div>
+              <div style="font-weight: 700; font-size: 1.15rem; color: #fff;">Personalized Learning Assessment</div>
+              <div style="font-size: 0.78rem; color: #8587a8;">Generated on ${escapeHtml(active.created_at || 'Just now')} &bull; Window: <strong>${escapeHtml(active.time_window || 'recent')}</strong></div>
+            </div>
+            <div>
+              <span class="intel-stat-badge intel-badge-strong" style="font-size: 0.9rem; padding: 0.35rem 0.75rem;">
+                Overall Score: ${Math.round(active.overall_score || 0)}/100
+              </span>
+            </div>
+          </div>
+
+          <div class="report-summary-box">
+            <div style="font-weight: 700; color: #a78bfa; margin-bottom: 0.3rem;">Executive Summary</div>
+            ${escapeHtml(active.executive_summary || active.summary || 'Summary unavailable.')}
+          </div>
+
+          <div class="intel-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="intel-card">
+              <h3 style="color: #4ade80;">🌟 Key Strengths</h3>
+              <div class="report-advice-list">
+                ${(active.key_strengths || []).length > 0 ? active.key_strengths.map(s => `
+                  <div class="report-advice-item">
+                    <span style="color: #4ade80;">✓</span>
+                    <span>${escapeHtml(s)}</span>
+                  </div>
+                `).join('') : '<div style="font-size: 0.8rem; color: #8587a8;">Keep practicing to develop signature strengths.</div>'}
+              </div>
+            </div>
+
+            <div class="intel-card">
+              <h3 style="color: #f87171;">🎯 Growth Areas</h3>
+              <div class="report-advice-list">
+                ${(active.growth_areas || []).length > 0 ? active.growth_areas.map(g => `
+                  <div class="report-advice-item">
+                    <span style="color: #f87171;">&bull;</span>
+                    <span>${escapeHtml(g)}</span>
+                  </div>
+                `).join('') : '<div style="font-size: 0.8rem; color: #8587a8;">No critical weaknesses identified!</div>'}
+              </div>
+            </div>
+          </div>
+
+          <div class="intel-card">
+            <h3 style="color: #a78bfa;">📋 Recommended Action Plan</h3>
+            <div class="report-advice-list">
+              ${(active.actionable_recommendations || []).length > 0 ? active.actionable_recommendations.map((a, i) => `
+                <div class="report-advice-item">
+                  <span style="font-weight: 700; color: #7c5cff;">${i + 1}.</span>
+                  <span>${escapeHtml(a)}</span>
+                </div>
+              `).join('') : '<div style="font-size: 0.8rem; color: #8587a8;">Complete more matches to receive customized study recommendations.</div>'}
+            </div>
+          </div>
+
+          ${active.study_schedule && Object.keys(active.study_schedule).length > 0 ? `
+            <div class="intel-card">
+              <h3 style="color: #facc15;">📅 Suggested Weekly Study Schedule</h3>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-top: 0.5rem;">
+                ${Object.entries(active.study_schedule).map(([day, plan]) => `
+                  <div style="background: #111326; border: 1px solid #232545; border-radius: 8px; padding: 0.75rem;">
+                    <div style="font-weight: 700; color: #fff; font-size: 0.84rem; text-transform: capitalize;">${escapeHtml(day)}</div>
+                    <div style="font-size: 0.78rem; color: #b2b5dc; margin-top: 0.25rem;">${escapeHtml(plan)}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${active.motivational_sign_off ? `
+            <div style="font-style: italic; font-size: 0.85rem; color: #8587a8; text-align: center; padding-top: 0.5rem;">
+              &ldquo;${escapeHtml(active.motivational_sign_off)}&rdquo;
+            </div>
+          ` : ''}
+        </div>
+      ` : `
+        <div class="intel-card" style="text-align: center; padding: 2.5rem 1rem;">
+          <h2 style="justify-content: center;">📊 No Learning Reports Generated Yet</h2>
+          <p class="intel-card-desc" style="max-width: 500px; margin: 0.5rem auto 1.5rem;">
+            Generate an AI learning report to get executive feedback, strength/weakness synthesis, and a study plan.
+          </p>
+          <button class="btn btn-primary" type="button" data-action="generate-report-btn">Generate AI Report</button>
+        </div>
+      `}
+    `;
+  }
+
+  function renderIntelCreator() {
+    const analysis = state.intelligenceQuestionAnalysis;
+
+    return `
+      <div class="intel-card" style="margin-bottom: 1.5rem;">
+        <h2>🛠️ Question Quality &amp; Answer Validation Studio</h2>
+        <div class="intel-card-desc">
+          Evaluate custom questions with multi-factor AI quality scoring, duplicate detection, and deterministic mathematical/factual answer validation.
+        </div>
+
+        <form id="intel-creator-form" style="display: flex; flex-direction: column; gap: 0.85rem; margin-top: 1rem;">
+          <div>
+            <label style="display: block; font-weight: 700; font-size: 0.84rem; margin-bottom: 0.3rem;">Question Prompt:</label>
+            <textarea id="intel-q-prompt" class="form-control" rows="2" placeholder="e.g. What is the derivative of x^2 with respect to x?" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.6rem;"></textarea>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Option A (Index 0):</label>
+              <input id="intel-q-opt0" class="form-control" type="text" placeholder="e.g. 2x" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Option B (Index 1):</label>
+              <input id="intel-q-opt1" class="form-control" type="text" placeholder="e.g. x" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Option C (Index 2):</label>
+              <input id="intel-q-opt2" class="form-control" type="text" placeholder="e.g. x^2" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Option D (Index 3):</label>
+              <input id="intel-q-opt3" class="form-control" type="text" placeholder="e.g. 2" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;" />
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Correct Answer:</label>
+              <select id="intel-q-correct" class="form-control" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;">
+                <option value="0">Option A (Index 0)</option>
+                <option value="1">Option B (Index 1)</option>
+                <option value="2">Option C (Index 2)</option>
+                <option value="3">Option D (Index 3)</option>
+              </select>
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Category:</label>
+              <input id="intel-q-category" class="form-control" type="text" value="Mathematics" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Difficulty:</label>
+              <select id="intel-q-difficulty" class="form-control" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.5rem;">
+                <option value="easy">Easy</option>
+                <option value="medium" selected>Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label style="display: block; font-size: 0.8rem; margin-bottom: 0.2rem;">Explanation &amp; Justification:</label>
+            <textarea id="intel-q-explanation" class="form-control" rows="2" placeholder="e.g. By the power rule of calculus, d/dx(x^n) = n*x^(n-1). Therefore, d/dx(x^2) = 2x." style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; border-radius: 8px; padding: 0.6rem;"></textarea>
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem;">
+            <button class="btn btn-primary" type="button" data-action="analyze-question">
+              🔍 Analyze Question Quality
+            </button>
+          </div>
+        </form>
+      </div>
+
+      ${analysis ? `
+        <div class="intel-card" style="border-left: 4px solid ${analysis.quality_score >= 80 ? '#4ade80' : analysis.quality_score >= 60 ? '#facc15' : '#ef4444'};">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <div>
+              <h3 style="margin: 0; font-size: 1.15rem;">Analysis Results</h3>
+              <div style="font-size: 0.8rem; color: #8587a8;">Multi-factor quality assessment report</div>
+            </div>
+            <div>
+              <span class="intel-stat-badge ${analysis.quality_score >= 80 ? 'intel-badge-strong' : analysis.quality_score >= 60 ? 'intel-badge-practice' : 'intel-badge-weak'}" style="font-size: 1.1rem; padding: 0.4rem 0.8rem;">
+                Quality Score: ${Math.round(analysis.quality_score)}/100
+              </span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; margin: 1rem 0;">
+            <div style="background: #111326; padding: 0.6rem; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.74rem; color: #8587a8;">Clarity</div>
+              <div style="font-weight: 700; color: #fff;">${Math.round(analysis.clarity_score || 0)}%</div>
+            </div>
+            <div style="background: #111326; padding: 0.6rem; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.74rem; color: #8587a8;">Consistency</div>
+              <div style="font-weight: 700; color: #fff;">${Math.round(analysis.consistency_score || 0)}%</div>
+            </div>
+            <div style="background: #111326; padding: 0.6rem; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.74rem; color: #8587a8;">Explanation</div>
+              <div style="font-weight: 700; color: #fff;">${Math.round(analysis.explanation_score || 0)}%</div>
+            </div>
+            <div style="background: #111326; padding: 0.6rem; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.74rem; color: #8587a8;">Ambiguity Risk</div>
+              <div style="font-weight: 700; color: #fff;">${Math.round(analysis.ambiguity_score || 0)}%</div>
+            </div>
+            <div style="background: #111326; padding: 0.6rem; border-radius: 8px; text-align: center;">
+              <div style="font-size: 0.74rem; color: #8587a8;">Duplicate Risk</div>
+              <div style="font-weight: 700; color: #fff;">${Math.round(analysis.duplicate_risk || 0)}%</div>
+            </div>
+          </div>
+
+          ${(analysis.issues || []).length > 0 ? `
+            <div style="margin-top: 0.5rem;">
+              <h4 style="color: #f87171; font-size: 0.88rem; margin-bottom: 0.4rem;">⚠️ Detected Issues:</h4>
+              <ul style="font-size: 0.82rem; color: #fca5a5; padding-left: 1.2rem; margin: 0;">
+                ${analysis.issues.map(iss => `<li>${escapeHtml(iss)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : '<div style="color: #4ade80; font-size: 0.84rem; margin-top: 0.5rem;">✓ No critical issues detected!</div>'}
+
+          ${(analysis.suggestions || []).length > 0 ? `
+            <div style="margin-top: 0.75rem;">
+              <h4 style="color: #a78bfa; font-size: 0.88rem; margin-bottom: 0.4rem;">💡 Suggestions for Improvement:</h4>
+              <ul style="font-size: 0.82rem; color: #d1d5db; padding-left: 1.2rem; margin: 0;">
+                ${analysis.suggestions.map(sug => `<li>${escapeHtml(sug)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
+          ${analysis.answer_validation ? `
+            <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #2b2e54;">
+              <h4 style="color: #fff; font-size: 0.88rem; margin-bottom: 0.25rem;">Answer Validation</h4>
+              <div style="font-size: 0.82rem; color: ${analysis.answer_validation.is_valid ? '#4ade80' : '#f87171'};">
+                ${analysis.answer_validation.is_valid ? '✓ Answer mathematically/factually consistent with options.' : `✗ Validation issue: ${escapeHtml(analysis.answer_validation.reason || 'Verification failed')}`}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+    `;
+  }
+
+  function intelligenceScreen() {
+    const tab = state.intelligenceTab || 'overview';
+
+    let bodyHtml = '';
+    if (state.intelligenceLoading && !state.intelligenceOverview) {
+      bodyHtml = '<div class="intel-card" style="text-align: center; padding: 2rem;"><p>Loading AI intelligence data…</p></div>';
+    } else if (state.intelligenceError && !state.profileCredential) {
+      bodyHtml = `
+        <div class="intel-card" style="text-align: center; padding: 2.5rem 1rem;">
+          <h2>🔒 Profile Authentication Required</h2>
+          <p class="intel-card-desc" style="max-width: 480px; margin: 0.5rem auto 1.5rem;">
+            AI intelligence analyzes your personal performance, identifies weaknesses, and generates learning paths. Link or create a player profile to unlock this suite.
+          </p>
+          <button class="btn btn-primary" type="button" data-action="nav-profile">Go to Profile</button>
+        </div>
+      `;
+    } else {
+      switch (tab) {
+        case 'topics': bodyHtml = renderIntelTopics(); break;
+        case 'difficulty': bodyHtml = renderIntelDifficulty(); break;
+        case 'paths': bodyHtml = renderIntelPath(); break;
+        case 'recommendations': bodyHtml = renderIntelRecommendations(); break;
+        case 'performance': bodyHtml = renderIntelPerformance(); break;
+        case 'reports': bodyHtml = renderIntelReports(); break;
+        case 'creator': bodyHtml = renderIntelCreator(); break;
+        default: bodyHtml = renderIntelOverview(); break;
+      }
+    }
+
+    app.innerHTML = `
+      <div class="intel-shell">
+        <div class="intel-header">
+          <div>
+            <h1>🧠 AI Intelligence &amp; Learning Hub</h1>
+            <p style="margin: 0.25rem 0 0; font-size: 0.88rem; color: #9497bc;">
+              Adaptive learning algorithms, weakness diagnosis, personalized curriculums, and question quality analysis.
+            </p>
+          </div>
+          <button class="btn btn-secondary" type="button" data-action="refresh-intel">↻ Refresh</button>
+        </div>
+
+        <nav class="intel-nav" aria-label="AI Intelligence Tabs">
+          <button class="intel-tab-btn ${tab === 'overview' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="overview">Overview</button>
+          <button class="intel-tab-btn ${tab === 'topics' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="topics">Topic Mastery &amp; Weaknesses</button>
+          <button class="intel-tab-btn ${tab === 'difficulty' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="difficulty">Adaptive Difficulty</button>
+          <button class="intel-tab-btn ${tab === 'paths' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="paths">Learning Paths</button>
+          <button class="intel-tab-btn ${tab === 'recommendations' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="recommendations">Recommendations</button>
+          <button class="intel-tab-btn ${tab === 'performance' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="performance">Performance Analytics</button>
+          <button class="intel-tab-btn ${tab === 'reports' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="reports">AI Learning Reports</button>
+          <button class="intel-tab-btn ${tab === 'creator' ? 'active' : ''}" type="button" data-action="intel-tab" data-tab="creator">Quality Creator Studio</button>
+        </nav>
+
+        ${state.intelligenceError ? `<p class="library-message" role="status" style="color: #f87171; border-color: rgba(239, 68, 68, 0.4);">${escapeHtml(state.intelligenceError)}</p>` : ''}
+
+        <div class="intel-tab-content">
+          ${bodyHtml}
+        </div>
+      </div>
+    `;
+  }
+
   function render() {
     if (state.tick) clearInterval(state.tick);
+    if (state.view === 'intelligence') {
+      intelligenceScreen();
+      return;
+    }
     if (state.view === 'social') {
       socialScreen();
       return;
@@ -4166,6 +4933,140 @@
     else if (action === 'refresh-social-hub') {
       void refreshSocial();
     }
+    else if (action === 'intel-tab') {
+      state.intelligenceTab = target.dataset.tab;
+      render();
+    }
+    else if (action === 'refresh-intel') {
+      void refreshIntelligence();
+    }
+    else if (action === 'set-perf-window') {
+      state.intelligenceTimeWindow = target.dataset.window;
+      render();
+      try {
+        const { response, data } = await playerApi(`/api/intelligence/performance?time_window=${encodeURIComponent(state.intelligenceTimeWindow)}`);
+        if (response.ok) {
+          state.intelligencePerformance = data;
+          render();
+        }
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'apply-recommended-diff') {
+      const diff = target.dataset.difficulty;
+      try {
+        if (state.preferences) {
+          state.preferences.difficulty = diff;
+          localStorage.setItem(PREFERENCE_KEY, JSON.stringify(state.preferences));
+        }
+        notify(`Difficulty preference updated to ${diff.toUpperCase()}!`);
+        void refreshIntelligence();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'complete-path-step') {
+      const pathId = target.dataset.pathId;
+      const stepId = target.dataset.stepId;
+      try {
+        const { response, data } = await playerApi(`/api/intelligence/learning-paths/${pathId}/steps/${stepId}/complete`, {
+          method: 'POST'
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not complete learning path step.');
+        state.intelligenceLearningPath = data.path || data;
+        notify('Step marked as completed! Keep going!');
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'regenerate-path') {
+      try {
+        state.intelligenceLoading = true;
+        render();
+        const { response, data } = await playerApi('/api/intelligence/learning-paths/generate', {
+          method: 'POST',
+          body: JSON.stringify({ regenerate: true })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not generate learning path.');
+        state.intelligenceLearningPath = data;
+        state.intelligenceTab = 'paths';
+        notify('Personalized learning path generated!');
+      } catch (err) { notify(err.message); }
+      finally {
+        state.intelligenceLoading = false;
+        render();
+      }
+    }
+    else if (action === 'generate-report-btn') {
+      try {
+        state.intelligenceLoading = true;
+        render();
+        const { response, data } = await playerApi('/api/intelligence/reports/generate', {
+          method: 'POST',
+          body: JSON.stringify({ time_window: state.intelligenceTimeWindow || 'recent' })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not generate report.');
+        state.intelligenceReports.unshift(data);
+        state.intelligenceSelectedReport = data;
+        state.intelligenceTab = 'reports';
+        notify('Comprehensive AI report generated!');
+      } catch (err) { notify(err.message); }
+      finally {
+        state.intelligenceLoading = false;
+        render();
+      }
+    }
+    else if (action === 'select-report') {
+      const repId = target.dataset.reportId;
+      const found = state.intelligenceReports.find(r => r.id === repId);
+      if (found) {
+        state.intelligenceSelectedReport = found;
+        render();
+      }
+    }
+    else if (action === 'analyze-question') {
+      const prompt = document.querySelector('#intel-q-prompt')?.value.trim() || '';
+      const opt0 = document.querySelector('#intel-q-opt0')?.value.trim() || '';
+      const opt1 = document.querySelector('#intel-q-opt1')?.value.trim() || '';
+      const opt2 = document.querySelector('#intel-q-opt2')?.value.trim() || '';
+      const opt3 = document.querySelector('#intel-q-opt3')?.value.trim() || '';
+      const correct = parseInt(document.querySelector('#intel-q-correct')?.value || '0', 10);
+      const category = document.querySelector('#intel-q-category')?.value.trim() || 'General';
+      const difficulty = document.querySelector('#intel-q-difficulty')?.value || 'medium';
+      const explanation = document.querySelector('#intel-q-explanation')?.value.trim() || '';
+
+      const opts = [opt0, opt1, opt2, opt3].filter(o => o.length > 0);
+      if (prompt.length < 5 || opts.length < 2) {
+        notify('Please enter a question prompt and at least 2 options.');
+        return;
+      }
+      try {
+        const { response, data } = await playerApi('/api/intelligence/questions/analyze', {
+          method: 'POST',
+          body: JSON.stringify({
+            prompt,
+            options: opts,
+            correct_index: Math.min(correct, opts.length - 1),
+            category,
+            difficulty,
+            explanation
+          })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Question analysis failed.');
+        state.intelligenceQuestionAnalysis = data;
+        notify('Question analysis completed!');
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'start-rec-quiz') {
+      const category = target.dataset.category;
+      const difficulty = target.dataset.difficulty;
+      if (state.preferences) {
+        if (difficulty) state.preferences.difficulty = difficulty;
+      }
+      state.view = 'play';
+      state.screen = 'home';
+      setActiveNavigation();
+      render();
+      notify(`Ready to practice ${category} (${difficulty})! Click Solo Practice to start.`);
+    }
+
     else if (action === 'social-tab') {
       state.socialTab = target.dataset.tab;
       render();
@@ -4855,6 +5756,7 @@
     else if (state.view === 'tournaments') void refreshTournaments();
     else if (state.view === 'leagues') void refreshLeagues();
     else if (state.view === 'social') void refreshSocial();
+    else if (state.view === 'intelligence') void refreshIntelligence();
     else render();
   });
   setActiveNavigation();

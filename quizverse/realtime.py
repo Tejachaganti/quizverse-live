@@ -81,6 +81,8 @@ from quizverse.persistence.notifications import (
     SocialIntelligenceService,
 )
 from quizverse.notification_api import install_notification_api
+from quizverse.intelligence import AIIntelligenceService
+from quizverse.intelligence_api import register_intelligence_api
 from quizverse.persistence.player_identity import ProcessRateLimiter
 
 MAX_MESSAGE_BYTES = 4096
@@ -433,7 +435,14 @@ def create_app(
     app.state.notification_service = notification_service
     app.state.social_intelligence_service = social_intelligence_service
 
-    install_quiz_api(app, quiz_access, GenerationService(ai_provider))
+    ai_gen_svc = GenerationService(ai_provider)
+    intelligence_service = AIIntelligenceService(
+        database=persistence,
+        ai_service=ai_gen_svc,
+    )
+    app.state.intelligence_service = intelligence_service
+
+    install_quiz_api(app, quiz_access, ai_gen_svc)
     install_player_api(app, player_identities, match_history, player_tickets)
     install_taxonomy_api(app, persistence)
     install_exam_collection_api(app, persistence)
@@ -445,6 +454,7 @@ def create_app(
     install_invitations_api(app, invitation_service, rematch_service, player_identities, active_engine)
     install_messaging_api(app, messaging_service, player_identities, presence_service)
     install_notification_api(app, notification_service, social_intelligence_service, player_identities, presence_service)
+    register_intelligence_api(app, intelligence_service, player_identities)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:
