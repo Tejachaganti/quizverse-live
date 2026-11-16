@@ -107,8 +107,19 @@ class LobbyEvent(EventModel):
     event: Literal["lobby"]
 
 
+class RoomChatEvent(EventModel):
+    event: Literal["room_chat"]
+    text: str = Field(min_length=1, max_length=500)
+
+
+class RoomChatReactionEvent(EventModel):
+    event: Literal["room_chat_reaction"]
+    message_id: str = Field(min_length=8, max_length=64)
+    reaction: Literal["👍", "❤️", "😂", "🔥", "👏", "😮", "😢"]
+
+
 ClientEvent: TypeAlias = Annotated[
-    CreateEvent | JoinEvent | ReconnectEvent | StartEvent | AnswerEvent | AbilityEvent | BluffSubmitEvent | BluffVoteEvent | EscapeAnswerEvent | EscapeHintEvent | RematchEvent | LobbyEvent,
+    CreateEvent | JoinEvent | ReconnectEvent | StartEvent | AnswerEvent | AbilityEvent | BluffSubmitEvent | BluffVoteEvent | EscapeAnswerEvent | EscapeHintEvent | RematchEvent | LobbyEvent | RoomChatEvent | RoomChatReactionEvent,
     Field(discriminator="event"),
 ]
 EVENT_ADAPTER = TypeAdapter(ClientEvent)

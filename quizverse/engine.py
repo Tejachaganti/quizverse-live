@@ -144,6 +144,7 @@ class Room:
     completion_attempts: int = 0
     completion_next_retry: float = 0.0
     completion_inflight: bool = False
+    chat_messages: list[dict[str, object]] = field(default_factory=list)
     completion_error_code: str | None = None
     saved_match_id: str | None = None
     completion_payload: dict[str, object] | None = None
@@ -709,6 +710,7 @@ class GameEngine:
                 if result_data is not None else None
             ),
             "can_start": can_start,
+            "chat_messages": list(room.chat_messages[-50:]),
             **({"can_start_reason": self._can_start_reason(room)} if room.match_config.mode in {GameMode.TEAM_BATTLE, GameMode.SOLO_PRACTICE} or room.match_config.elimination or room.match_config.bluff_master or room.match_config.escape_room else {}),
         }
 
@@ -1850,3 +1852,89 @@ class GameEngine:
                 "is_full": len(room.players) >= room.match_config.max_players,
                 "is_waiting": room.phase == Phase.WAITING,
             }
+
+    async def send_room_chat_message(self, room_code: str, player_id: str, content: str) -> dict[str, object]:
+        """Send a real-time room chat message. Validates room membership and lifecycle."""
+        cleaned = content.strip()
+        if not cleaned:
+            raise GameError("empty_message", "Chat message cannot be empty.")
+        if len(cleaned) > 500:
+            raise GameError("message_too_long", "Chat message cannot exceed 500 characters.")
+
+        async with self._lock:
+            room_code_clean = room_code.strip().upper()
+            room = self._rooms.get(room_code_clean)
+            if room is None:
+                raise GameError("room_not_found", "The specified room does not exist.")
+
+            player = room.players.get(player_id)
+            if player is None or not player.connected:
+                raise GameError("not_member", "You are not an active member of this room.")
+
+            if room.phase == Phase.RESULTS:
+                raise GameError("room_closed", "Chat is closed because the room has finished.")
+
+            msg_id = secrets.token_hex(16)
+            now_iso = datetime.now(UTC).isoformat()
+            msg: dict[str, object] = {
+                "id": msg_id,
+                "room_code": room_code_clean,
+                "player_id": player_id,
+                "sender_name": player.name,
+                "content": cleaned,
+                "created_at": now_iso,
+                "reactions": {},
+            }
+            room.chat_messages.append(msg)
+            if len(room.chat_messages) > 100:
+                room.chat_messages.pop(0)
+
+            return msg
+
+    async def add_room_chat_reaction(self, room_code: str, player_id: str, message_id: str, reaction: str) -> dict[str, object]:
+        """Add or toggle an emoji reaction on a room chat message."""
+        allowed_reactions = {"👍", "❤️", "😂", "🔥", "👏", "😮", "😢"}
+        if reaction not in allowed_reactions:
+            raise GameError("invalid_reaction", f"Reaction must be one of: {', '.join(sorted(allowed_reactions))}")
+
+        async with self._lock:
+            room_code_clean = room_code.strip().upper()
+            room = self._rooms.get(room_code_clean)
+            if room is None:
+                raise GameError("room_not_found", "The specified room does not exist.")
+
+            player = room.players.get(player_id)
+            if player is None or not player.connected:
+                raise GameError("not_member", "You are not an active member of this room.")
+
+            target_msg = None
+            for m in room.chat_messages:
+                if m.get("id") == message_id:
+                    target_msg = m
+                    break
+
+            if target_msg is None:
+                raise GameError("message_not_found", "Chat message not found in this room.")
+
+            rx_dict = target_msg.setdefault("reactions", {})  # type: ignore
+            if reaction not in rx_dict:
+                rx_dict[reaction] = []
+
+            if player_id in rx_dict[reaction]:
+                rx_dict[reaction].remove(player_id)
+                if not rx_dict[reaction]:
+                    del rx_dict[reaction]
+                action = "removed"
+            else:
+                rx_dict[reaction].append(player_id)
+                action = "added"
+
+            return {
+                "message_id": message_id,
+                "room_code": room_code_clean,
+                "player_id": player_id,
+                "reaction": reaction,
+                "action": action,
+                "reactions": dict(rx_dict),
+            }
+

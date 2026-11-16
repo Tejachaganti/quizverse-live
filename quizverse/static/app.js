@@ -116,6 +116,19 @@
     presenceHeartbeatTimer: null,
     presenceReconnectTimer: null,
     presenceReconnectDelay: 1000,
+    conversations: [],
+    activeConversationId: null,
+    activeMessages: [],
+    messagesLoading: false,
+    typingFriends: {},
+    typingTimer: null,
+    editingMessageId: null,
+    reportingMessageId: null,
+    reportingReason: 'inappropriate',
+    reportingDetails: '',
+    messageSearchQuery: '',
+    roomChatOpen: false,
+    roomChatUnread: 0,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -176,6 +189,31 @@
         sessionStorage.setItem('qv-token', state.token);
         sessionStorage.setItem('qv-name', state.name || state.room.players.find(player => player.id === state.playerId)?.name || '');
         render();
+        return;
+      }
+      if (message.event === 'room_chat_message') {
+        if (state.room) {
+          state.room.chat_messages = state.room.chat_messages || [];
+          if (!state.room.chat_messages.some(m => m.id === message.id)) {
+            state.room.chat_messages.push(message);
+          }
+          if (!state.roomChatOpen) {
+            state.roomChatUnread = (state.roomChatUnread || 0) + 1;
+          }
+          render();
+          const chatBox = document.querySelector('#room-chat-messages-container');
+          if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+        }
+        return;
+      }
+      if (message.event === 'room_chat_reaction_updated') {
+        if (state.room && state.room.chat_messages) {
+          const m = state.room.chat_messages.find(item => item.id === message.message_id);
+          if (m) {
+            m.reactions = message.reactions;
+            render();
+          }
+        }
         return;
       }
       if (message.state) {
@@ -2062,6 +2100,114 @@
               state.screen = 'lobby';
               setActiveNavigation();
             }
+          } else if (msg.event === 'direct_message_received') {
+            const incomingMsg = msg.message || msg;
+            const convId = incomingMsg.conversation_id || msg.conversation_id;
+            incomingMsg.is_mine = incomingMsg.sender_id === state.profile?.player_id;
+            if (state.activeConversationId === convId) {
+              if (!state.activeMessages.some(m => m.id === incomingMsg.id)) {
+                state.activeMessages.push(incomingMsg);
+              }
+              void playerApi(`/api/messages/conversations/${convId}/read`, { method: 'POST' });
+              setTimeout(scrollThreadToBottom, 50);
+            } else {
+              notify(`New message from ${incomingMsg.sender_name || 'Friend'}: ${(incomingMsg.content || '').slice(0, 35)}`);
+              const conv = (state.conversations || []).find(c => c.id === convId);
+              if (conv) {
+                conv.unread_count = (conv.unread_count || 0) + 1;
+                conv.last_message_preview = (incomingMsg.content || '').slice(0, 60);
+                conv.last_message_at = incomingMsg.created_at;
+              } else {
+                void refreshSocial(false);
+              }
+            }
+            if (state.view === 'social' && state.socialTab === 'messages') render();
+          } else if (msg.event === 'direct_message_delivered') {
+            const msgId = msg.id || msg.message_id;
+            const convId = msg.conversation_id;
+            const delivered_at = msg.delivered_at;
+            if (state.activeConversationId === convId) {
+              const m = state.activeMessages.find(item => item.id === msgId);
+              if (m) {
+                m.delivered_at = delivered_at;
+                m.status = m.read_at ? 'read' : 'delivered';
+                if (state.view === 'social' && state.socialTab === 'messages') render();
+              }
+            }
+          } else if (msg.event === 'direct_message_read') {
+            const convId = msg.conversation_id;
+            const { marked_message_ids, read_at } = msg;
+            if (state.activeConversationId === convId) {
+              const ids = new Set(marked_message_ids || []);
+              state.activeMessages.forEach(m => {
+                if (ids.has(m.id) || !marked_message_ids || marked_message_ids.length === 0) {
+                  m.is_read = true;
+                  m.read_at = read_at;
+                  m.status = 'read';
+                }
+              });
+              if (state.view === 'social' && state.socialTab === 'messages') render();
+            }
+          } else if (msg.event === 'direct_message_edited') {
+            const editedMsg = msg.message || msg;
+            const convId = editedMsg.conversation_id || msg.conversation_id;
+            if (state.activeConversationId === convId) {
+              const idx = state.activeMessages.findIndex(m => m.id === editedMsg.id);
+              if (idx !== -1) {
+                state.activeMessages[idx] = { ...state.activeMessages[idx], ...editedMsg, is_edited: true };
+                if (state.view === 'social' && state.socialTab === 'messages') render();
+              }
+            }
+            const conv = (state.conversations || []).find(c => c.id === convId);
+            if (conv) {
+              conv.last_message_preview = editedMsg.content ? editedMsg.content.slice(0, 60) : conv.last_message_preview;
+            }
+          } else if (msg.event === 'direct_message_deleted') {
+            const msgId = msg.id || msg.message_id;
+            const convId = msg.conversation_id;
+            const deleted_at = msg.deleted_at;
+            if (state.activeConversationId === convId) {
+              const m = state.activeMessages.find(item => item.id === msgId);
+              if (m) {
+                m.is_deleted = true;
+                m.deleted_at = deleted_at;
+                m.content = '[Message deleted]';
+                if (state.view === 'social' && state.socialTab === 'messages') render();
+              }
+            }
+            const conv = (state.conversations || []).find(c => c.id === convId);
+            if (conv) {
+              conv.last_message_preview = '[Message deleted]';
+            }
+          } else if (msg.event === 'direct_message_reaction_updated') {
+            const msgId = msg.id || msg.message_id;
+            const convId = msg.conversation_id;
+            const reactions = msg.reactions;
+            if (state.activeConversationId === convId) {
+              const m = state.activeMessages.find(item => item.id === msgId);
+              if (m) {
+                m.reactions = reactions;
+                if (state.view === 'social' && state.socialTab === 'messages') render();
+              }
+            }
+          } else if (msg.event === 'typing_started') {
+            if (msg.conversation_id) {
+              state.typingFriends[msg.conversation_id] = true;
+              if (state.view === 'social' && state.socialTab === 'messages' && state.activeConversationId === msg.conversation_id) {
+                render();
+              }
+              setTimeout(() => {
+                if (state.typingFriends[msg.conversation_id]) {
+                  delete state.typingFriends[msg.conversation_id];
+                  if (state.view === 'social' && state.socialTab === 'messages') render();
+                }
+              }, 4000);
+            }
+          } else if (msg.event === 'typing_stopped') {
+            if (msg.conversation_id) {
+              delete state.typingFriends[msg.conversation_id];
+              if (state.view === 'social' && state.socialTab === 'messages') render();
+            }
           }
         } catch {}
       };
@@ -2098,19 +2244,68 @@
     state.friendPresence = {};
   }
 
+  async function refreshActiveMessages() {
+    if (!state.activeConversationId) return;
+    try {
+      const res = await playerApi(`/api/messages/conversations/${state.activeConversationId}/messages?limit=50`);
+      if (res.response.ok) {
+        state.activeMessages = res.data.messages || [];
+        void playerApi(`/api/messages/conversations/${state.activeConversationId}/read`, { method: 'POST' });
+        const conv = (state.conversations || []).find(c => c.id === state.activeConversationId);
+        if (conv) conv.unread_count = 0;
+      }
+    } catch {}
+  }
+
+  function scrollThreadToBottom() {
+    const el = document.querySelector('#thread-messages-scroll');
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  async function openConversationWithFriend(friendId, friendName) {
+    state.socialTab = 'messages';
+    state.socialLoading = true;
+    render();
+    try {
+      let conv = (state.conversations || []).find(c => c.friend && c.friend.player_id === friendId);
+      if (!conv) {
+        const createRes = await playerApi('/api/messages/conversations', {
+          method: 'POST',
+          body: JSON.stringify({ friend_id: friendId })
+        });
+        if (createRes.response.ok) {
+          conv = createRes.data;
+          state.conversations.unshift(conv);
+        } else {
+          throw new Error(createRes.data?.error?.message || 'Could not start conversation.');
+        }
+      }
+      state.activeConversationId = conv.id;
+      state.editingMessageId = null;
+      await refreshActiveMessages();
+    } catch (err) {
+      notify(err.message);
+    } finally {
+      state.socialLoading = false;
+      render();
+      setTimeout(scrollThreadToBottom, 50);
+    }
+  }
+
   async function refreshSocial(renderBeforeFetch = true) {
     if (!state.profileCredential) { render(); return; }
     state.socialLoading = true;
     state.socialNotice = '';
     if (renderBeforeFetch) render();
     try {
-      const [friendsRes, incomingRes, outgoingRes, blockedRes, incInvRes, outInvRes] = await Promise.all([
+      const [friendsRes, incomingRes, outgoingRes, blockedRes, incInvRes, outInvRes, convRes] = await Promise.all([
         playerApi('/api/friends'),
         playerApi('/api/friends/requests/incoming'),
         playerApi('/api/friends/requests/outgoing'),
         playerApi('/api/blocks'),
         playerApi('/api/social/invitations/incoming'),
         playerApi('/api/social/invitations/outgoing'),
+        playerApi('/api/messages/conversations'),
       ]);
       if (friendsRes.response.ok) {
         state.friendsList = friendsRes.data.friends || [];
@@ -2125,6 +2320,10 @@
       if (blockedRes.response.ok) state.blockedList = blockedRes.data.blocked || blockedRes.data.blocked_players || [];
       if (incInvRes && incInvRes.response.ok) state.incomingInvitations = incInvRes.data.incoming_invitations || [];
       if (outInvRes && outInvRes.response.ok) state.outgoingInvitations = outInvRes.data.outgoing_invitations || [];
+      if (convRes && convRes.response.ok) state.conversations = convRes.data.conversations || [];
+      if (state.activeConversationId) {
+        await refreshActiveMessages();
+      }
     } catch (err) {
       state.socialNotice = err.message || 'Could not load social data.';
     } finally {
@@ -2185,7 +2384,8 @@
           </div>
         </div>
         <div class="social-card-actions">
-          ${state.room && state.room.phase === 'waiting' ? `<button class="btn btn-primary" type="button" data-action="invite-friend" data-friend-id="${f.player_id}" data-friend-name="${escapeHtml(f.display_name)}">Invite to Arena</button>` : ''}
+          <button class="btn btn-primary" type="button" data-action="open-friend-chat" data-friend-id="${f.player_id}" data-friend-name="${escapeHtml(f.display_name)}">💬 Message</button>
+          ${state.room && state.room.phase === 'waiting' ? `<button class="btn btn-secondary" type="button" data-action="invite-friend" data-friend-id="${f.player_id}" data-friend-name="${escapeHtml(f.display_name)}">Invite to Arena</button>` : ''}
           <button class="btn btn-secondary" type="button" data-action="view-public-profile" data-player-id="${f.player_id}">View Profile</button>
           <button class="btn btn-secondary" type="button" data-action="remove-friend" data-friend-id="${f.player_id}">Remove</button>
           <button class="btn btn-secondary" type="button" data-action="block-player" data-player-id="${f.player_id}">Block</button>
@@ -2438,6 +2638,326 @@
     `;
   }
 
+  function renderMessagesTab() {
+    const filterQuery = (state.messageSearchQuery || '').toLowerCase();
+    const filteredConvs = (state.conversations || []).filter(c => {
+      const name = (c.friend?.display_name || '').toLowerCase();
+      return !filterQuery || name.includes(filterQuery);
+    });
+
+    const activeConv = (state.conversations || []).find(c => c.id === state.activeConversationId);
+
+    // Left sidebar: conversations
+    const convItems = filteredConvs.length === 0
+      ? '<div class="messaging-empty-list"><p>No conversations found.</p></div>'
+      : filteredConvs.map(c => {
+          const friend = c.friend || {};
+          const pInfo = state.friendPresence[friend.player_id];
+          const pStatus = pInfo?.status || friend.presence?.status || 'offline';
+          const isCurrent = c.id === state.activeConversationId;
+          const snippet = c.last_message_preview
+            ? escapeHtml(c.last_message_preview)
+            : '<em>No messages yet</em>';
+          const timeStr = c.last_message_at
+            ? new Date(c.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : '';
+          const unreadBadge = c.unread_count > 0 ? `<span class="social-badge">${c.unread_count}</span>` : '';
+
+          return `
+            <div class="conv-item ${isCurrent ? 'active' : ''}" data-action="select-conversation" data-conversation-id="${c.id}">
+              <div class="conv-avatar-wrap">
+                <div class="social-avatar">${escapeHtml(initials(friend.display_name || 'Player'))}</div>
+                <span class="presence-dot ${pStatus}"></span>
+              </div>
+              <div class="conv-info">
+                <div class="conv-header">
+                  <strong class="conv-name">${escapeHtml(friend.display_name)}</strong>
+                  <span class="conv-time">${timeStr}</span>
+                </div>
+                <div class="conv-preview">
+                  <span class="conv-snippet">${snippet}</span>
+                  ${unreadBadge}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+    // Right side: Active Thread
+    let threadHtml = '';
+    if (!activeConv) {
+      threadHtml = `
+        <div class="thread-placeholder">
+          <div class="thread-placeholder-inner">
+            <span class="placeholder-icon">💬</span>
+            <h3>Select a Conversation</h3>
+            <p>Choose a friend from the list or start a new chat from the Friends tab.</p>
+            <button class="btn btn-secondary" type="button" data-action="social-tab" data-tab="friends">Go to Friends</button>
+          </div>
+        </div>
+      `;
+    } else {
+      const friend = activeConv.friend || {};
+      const pInfo = state.friendPresence[friend.player_id];
+      const pStatus = pInfo?.status || friend.presence?.status || 'offline';
+      let statusLabel = 'Offline';
+      if (pStatus === 'online') statusLabel = 'Online';
+      else if (pStatus === 'in_lobby') statusLabel = 'In Lobby';
+      else if (pStatus === 'in_match') statusLabel = 'In Match';
+
+      const isTyping = !!state.typingFriends[activeConv.id];
+
+      const messagesHtml = state.messagesLoading
+        ? '<div class="loading-state"><span class="loader"></span><p>Loading messages…</p></div>'
+        : (state.activeMessages || []).length === 0
+          ? '<div class="thread-empty"><p>No messages yet. Say hello!</p></div>'
+          : (state.activeMessages || []).map(m => {
+              const isMine = m.is_mine || m.sender_id === state.profile?.player_id;
+              const isDeleted = m.is_deleted || !!m.deleted_at;
+              const isEdited = m.is_edited || !!m.edited_at;
+
+              // Read / delivery receipt checkmark
+              let receiptHtml = '';
+              if (isMine && !isDeleted) {
+                if (m.is_read || m.read_at || m.status === 'read') {
+                  receiptHtml = '<span class="receipt-check read" title="Read">✓✓</span>';
+                } else if (m.delivered_at || m.status === 'delivered') {
+                  receiptHtml = '<span class="receipt-check delivered" title="Delivered">✓✓</span>';
+                } else {
+                  receiptHtml = '<span class="receipt-check sent" title="Sent">✓</span>';
+                }
+              }
+
+              // Edit / delete within 5 minutes
+              const canEdit = isMine && !isDeleted && (Date.now() - new Date(m.created_at).getTime() < 5 * 60 * 1000);
+              const canDelete = isMine && !isDeleted;
+              const canReport = !isMine && !isDeleted;
+
+              // Reaction pills
+              const rxSummary = m.reactions || {};
+              const rxPills = Object.entries(rxSummary).filter(([_, val]) => {
+                if (Array.isArray(val)) return val.length > 0;
+                if (typeof val === 'object') return (val.count || 0) > 0;
+                return val > 0;
+              }).map(([emoji, val]) => {
+                let count = 0;
+                let reactedByMe = false;
+                if (Array.isArray(val)) {
+                  count = val.length;
+                  reactedByMe = val.includes(state.profile?.player_id);
+                } else if (typeof val === 'object') {
+                  count = val.count || 0;
+                  reactedByMe = !!val.reacted_by_me;
+                } else {
+                  count = val;
+                }
+                return `
+                  <button class="rx-pill ${reactedByMe ? 'active' : ''}" type="button" data-action="toggle-dm-reaction" data-message-id="${m.id}" data-reaction="${emoji}">
+                    ${emoji} ${count}
+                  </button>
+                `;
+              }).join('');
+
+              const contentHtml = isDeleted
+                ? '<span class="msg-deleted-text"><em>🚫 This message was deleted</em></span>'
+                : `${escapeHtml(m.content)}${isEdited ? ' <span class="msg-edited-tag">(edited)</span>' : ''}`;
+
+              return `
+                <div class="msg-row ${isMine ? 'mine' : 'theirs'}" data-message-id="${m.id}">
+                  <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'} ${isDeleted ? 'bubble-deleted' : ''}">
+                    <div class="msg-text">${contentHtml}</div>
+                    <div class="msg-footer">
+                      <span class="msg-time">${new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      ${receiptHtml}
+                    </div>
+                  </div>
+                  ${!isDeleted ? `
+                    <div class="msg-actions-row">
+                      <div class="msg-rx-picker">
+                        ${['👍', '❤️', '😂', '🔥', '👏', '😮', '😢'].map(emoji => `
+                          <button class="rx-btn" type="button" data-action="toggle-dm-reaction" data-message-id="${m.id}" data-reaction="${emoji}">${emoji}</button>
+                        `).join('')}
+                      </div>
+                      <div class="msg-manage-btns">
+                        ${canEdit ? `<button class="msg-action-btn" type="button" data-action="start-edit-dm" data-message-id="${m.id}" data-content="${escapeHtml(m.content)}" title="Edit">✏️</button>` : ''}
+                        ${canDelete ? `<button class="msg-action-btn" type="button" data-action="delete-dm" data-message-id="${m.id}" title="Delete">🗑️</button>` : ''}
+                        ${canReport ? `<button class="msg-action-btn" type="button" data-action="start-report-dm" data-message-id="${m.id}" title="Report">🚩</button>` : ''}
+                      </div>
+                    </div>
+                  ` : ''}
+                  ${rxPills ? `<div class="msg-reactions-bar">${rxPills}</div>` : ''}
+                </div>
+              `;
+            }).join('');
+
+      const editingBanner = state.editingMessageId
+        ? `
+          <div class="editing-banner">
+            <span>Editing message</span>
+            <button class="btn btn-secondary btn-sm" type="button" data-action="cancel-edit-dm">Cancel</button>
+          </div>
+        `
+        : '';
+
+      const typingIndicator = isTyping
+        ? `<div class="typing-indicator-bar"><span class="typing-dots"><span></span><span></span><span></span></span> ${escapeHtml(friend.display_name)} is typing…</div>`
+        : '';
+
+      threadHtml = `
+        <div class="thread-container">
+          <div class="thread-header">
+            <div class="thread-header-user">
+              <button class="btn btn-secondary btn-icon mobile-only" type="button" data-action="close-active-chat" title="Back to conversations">←</button>
+              <div class="conv-avatar-wrap">
+                <div class="social-avatar">${escapeHtml(initials(friend.display_name || 'Player'))}</div>
+                <span class="presence-dot ${pStatus}"></span>
+              </div>
+              <div class="thread-header-meta">
+                <strong>${escapeHtml(friend.display_name)}</strong>
+                <span class="thread-presence-label ${pStatus}">${statusLabel}</span>
+              </div>
+            </div>
+            <div class="thread-header-actions">
+              <button class="btn btn-secondary btn-sm" type="button" data-action="view-public-profile" data-player-id="${friend.player_id}">Profile</button>
+            </div>
+          </div>
+          <div class="thread-messages" id="thread-messages-scroll">
+            ${messagesHtml}
+          </div>
+          ${typingIndicator}
+          ${editingBanner}
+          <div class="thread-composer">
+            <textarea id="dm-composer-input" maxlength="2000" placeholder="Type a message to ${escapeHtml(friend.display_name)}..." rows="1">${escapeHtml(state.messageDraft || '')}</textarea>
+            <div class="composer-controls">
+              <span class="char-count" id="dm-char-count">${(state.messageDraft || '').length} / 2000</span>
+              <button class="btn btn-primary" type="button" data-action="${state.editingMessageId ? 'submit-edit-dm' : 'send-dm'}">
+                ${state.editingMessageId ? 'Save' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="messaging-shell ${activeConv ? 'has-active-chat' : ''}">
+        <div class="messaging-sidebar">
+          <div class="messaging-search">
+            <input type="search" id="dm-search-input" placeholder="Search conversations..." value="${escapeHtml(state.messageSearchQuery || '')}">
+          </div>
+          <div class="conv-list">
+            ${convItems}
+          </div>
+        </div>
+        <div class="messaging-main">
+          ${threadHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderReportModal() {
+    return `
+      <div class="social-modal-backdrop" data-action="close-report-modal">
+        <div class="social-modal report-modal" data-action="modal-container">
+          <div class="social-modal-header">
+            <h2>Report Message</h2>
+            <button class="btn btn-secondary" type="button" data-action="close-report-modal">✕</button>
+          </div>
+          <div class="social-modal-body">
+            <p>Why are you reporting this message? Our safety team will review it.</p>
+            <label for="report-reason-select" style="display:block;margin-top:.75rem;font-weight:600">Reason</label>
+            <select id="report-reason-select" class="field" style="width:100%;margin-top:.25rem">
+              <option value="inappropriate" ${state.reportingReason === 'inappropriate' ? 'selected' : ''}>Inappropriate Content</option>
+              <option value="harassment" ${state.reportingReason === 'harassment' ? 'selected' : ''}>Harassment</option>
+              <option value="spam" ${state.reportingReason === 'spam' ? 'selected' : ''}>Spam</option>
+              <option value="abuse" ${state.reportingReason === 'abuse' ? 'selected' : ''}>Abuse</option>
+              <option value="other" ${state.reportingReason === 'other' ? 'selected' : ''}>Other</option>
+            </select>
+            <label for="report-details-input" style="display:block;margin-top:.75rem;font-weight:600">Additional Details (Optional)</label>
+            <textarea id="report-details-input" rows="3" class="field" style="height:auto;padding:.5rem;margin-top:.25rem" placeholder="Provide any additional context...">${escapeHtml(state.reportingDetails || '')}</textarea>
+          </div>
+          <div class="social-modal-actions">
+            <button class="btn btn-primary" type="button" data-action="submit-report-dm">Submit Report</button>
+            <button class="btn btn-secondary" type="button" data-action="close-report-modal">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderRoomChatDrawer() {
+    if (!state.room) return '';
+    const unreadBadge = (!state.roomChatOpen && state.roomChatUnread > 0)
+      ? `<span class="chat-badge">${state.roomChatUnread}</span>`
+      : '';
+    const messages = state.room.chat_messages || [];
+    const isClosed = state.room.phase === 'results';
+
+    const drawerBody = messages.length === 0
+      ? '<div class="room-chat-empty">No messages yet. Say hello to everyone!</div>'
+      : messages.map(m => {
+          const isMine = m.player_id === state.playerId;
+          const rxList = m.reactions || {};
+          const rxButtons = Object.entries(rxList).map(([rx, val]) => {
+            const count = Array.isArray(val) ? val.length : (typeof val === 'number' ? val : 0);
+            if (count <= 0) return '';
+            const userReacted = Array.isArray(val) ? val.includes(state.playerId) : false;
+            return `
+              <button class="room-chat-rx-pill ${userReacted ? 'active' : ''}" type="button" data-action="toggle-room-reaction" data-message-id="${m.id}" data-reaction="${rx}">${rx} ${count}</button>
+            `;
+          }).join('');
+          const author = m.sender_name || m.player_name || 'Player';
+          const content = m.content || m.text || '';
+          return `
+            <div class="room-chat-msg ${isMine ? 'mine' : ''}">
+              <div class="room-chat-author">
+                <span>${escapeHtml(author)}${isMine ? ' (You)' : ''}</span>
+                <span class="room-chat-time">${new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <div class="room-chat-text">${escapeHtml(content)}</div>
+              <div class="room-chat-reactions">
+                ${rxButtons}
+                <div class="room-chat-rx-picker">
+                  ${['👍', '❤️', '😂', '🔥', '👏', '😮', '😢'].map(emoji => `
+                    <button class="rx-quick-btn" type="button" data-action="toggle-room-reaction" data-message-id="${m.id}" data-reaction="${emoji}">${emoji}</button>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+    const inputForm = isClosed
+      ? '<div class="room-chat-closed">Room chat is closed for this match.</div>'
+      : `
+        <form class="room-chat-form" id="room-chat-form" onsubmit="return false;">
+          <input type="text" id="room-chat-input" maxlength="500" placeholder="Type a message..." autocomplete="off">
+          <button class="btn btn-primary btn-sm" type="button" data-action="send-room-chat">Send</button>
+        </form>
+      `;
+
+    return `
+      <div id="room-chat-container">
+        <button id="room-chat-toggle" class="room-chat-toggle-btn ${state.roomChatOpen ? 'active' : ''}" type="button" data-action="toggle-room-chat" aria-label="Toggle Arena Chat">
+          💬 Arena Chat ${unreadBadge}
+        </button>
+        <div id="room-chat-drawer" class="room-chat-drawer ${state.roomChatOpen ? 'open' : 'closed'}">
+          <div class="room-chat-header">
+            <h4>💬 Arena Chat (${escapeHtml(state.room.code)})</h4>
+            <button class="btn btn-secondary btn-sm" type="button" data-action="toggle-room-chat" aria-label="Close Chat">✕</button>
+          </div>
+          <div class="room-chat-messages" id="room-chat-messages-container">
+            ${drawerBody}
+          </div>
+          <div class="room-chat-footer">
+            ${inputForm}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function socialScreen() {
     app.classList.remove('library-shell');
     if (!state.profileCredential) {
@@ -2461,10 +2981,14 @@
 
     const unreadRequests = state.incomingRequests.length;
     const unreadInvitations = state.incomingInvitations.length;
+    const unreadMessages = (state.conversations || []).reduce((acc, c) => acc + (c.unread_count || 0), 0);
     const navHtml = `
       <div class="social-nav" role="tablist">
         <button class="social-tab-btn ${state.socialTab === 'friends' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="friends" role="tab" aria-selected="${state.socialTab === 'friends'}">
           Friends <span class="social-count">${state.friendsList.length}</span>
+        </button>
+        <button class="social-tab-btn ${state.socialTab === 'messages' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="messages" role="tab" aria-selected="${state.socialTab === 'messages'}">
+          Messages ${unreadMessages > 0 ? `<span class="social-badge">${unreadMessages}</span>` : ''}
         </button>
         <button class="social-tab-btn ${state.socialTab === 'invitations' ? 'active' : ''}" type="button" data-action="social-tab" data-tab="invitations" role="tab" aria-selected="${state.socialTab === 'invitations'}">
           Invitations ${unreadInvitations > 0 ? `<span class="social-badge">${unreadInvitations}</span>` : ''}
@@ -2482,10 +3006,12 @@
     `;
 
     let bodyHtml = '';
-    if (state.socialLoading && !state.friendsList.length && !state.playerSearchResults.length) {
+    if (state.socialLoading && !state.friendsList.length && !state.playerSearchResults.length && !state.conversations.length) {
       bodyHtml = '<div class="loading-state"><span class="loader"></span><p>Loading social data…</p></div>';
     } else if (state.socialTab === 'friends') {
       bodyHtml = renderFriendsTab();
+    } else if (state.socialTab === 'messages') {
+      bodyHtml = renderMessagesTab();
     } else if (state.socialTab === 'invitations') {
       bodyHtml = renderInvitationsTab();
     } else if (state.socialTab === 'search') {
@@ -2497,6 +3023,7 @@
     }
 
     const modalHtml = state.selectedPublicProfile ? renderPublicProfileModal() : '';
+    const reportModalHtml = state.reportingMessageId ? renderReportModal() : '';
 
     app.innerHTML = `
       <div class="social-shell">
@@ -2513,6 +3040,7 @@
           ${bodyHtml}
         </div>
         ${modalHtml}
+        ${reportModalHtml}
       </div>
     `;
   }
@@ -2557,7 +3085,7 @@
     const phase = state.room.phase;
     state.screen = phase === 'waiting' ? 'lobby' : phase === 'results' ? 'results' : 'game';
     const offline = state.connected ? '' : '<div class="offline-banner" role="status">Connection interrupted — reconnecting to your arena…</div>';
-    app.innerHTML = `${offline}${phase === 'waiting' ? lobby() : phase === 'results' ? results() : game()}`;
+    app.innerHTML = `${offline}${phase === 'waiting' ? lobby() : phase === 'results' ? results() : game()}${renderRoomChatDrawer()}`;
     if (phase === 'results' && state.room.match_history && state.room.match_history.status !== 'not_linked') {
       const notice = document.createElement('p');
       notice.className = `profile-history-status${state.room.match_history.status === 'retrying' ? ' warning' : ''}`;
@@ -2607,6 +3135,7 @@
     const target = event.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
+    if (action === 'modal-container') return;
     const nickname = document.querySelector('#player-name');
     if (nickname) {
       state.name = nickname.value.trim();
@@ -3231,6 +3760,14 @@
     else if (action === 'social-tab') {
       state.socialTab = target.dataset.tab;
       render();
+      if (state.socialTab === 'messages') {
+        playerApi('/api/messages/conversations').then(res => {
+          if (res.response.ok) {
+            state.conversations = res.data.conversations || [];
+            render();
+          }
+        });
+      }
     }
     else if (action === 'exec-player-search') {
       const query = document.querySelector('#player-search-input')?.value.trim() || '';
@@ -3473,11 +4010,222 @@
         await refreshRematches();
       } catch (err) { notify(err.message); }
     }
+    else if (action === 'open-friend-chat') {
+      const friendId = target.dataset.friendId;
+      const friendName = target.dataset.friendName;
+      await openConversationWithFriend(friendId, friendName);
+    }
+    else if (action === 'select-conversation') {
+      const convId = target.dataset.conversationId;
+      state.activeConversationId = convId;
+      state.editingMessageId = null;
+      state.messageDraft = '';
+      render();
+      await refreshActiveMessages();
+      render();
+      setTimeout(scrollThreadToBottom, 50);
+    }
+    else if (action === 'close-active-chat') {
+      state.activeConversationId = null;
+      render();
+    }
+    else if (action === 'send-dm') {
+      const input = document.querySelector('#dm-composer-input');
+      const text = input ? input.value.trim() : '';
+      if (!text) return;
+      if (!state.activeConversationId) return;
+      try {
+        const { response, data } = await playerApi(`/api/messages/conversations/${state.activeConversationId}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ content: text })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not send message.');
+        if (!state.activeMessages.some(m => m.id === data.id)) {
+          state.activeMessages.push(data);
+        }
+        state.messageDraft = '';
+        if (input) input.value = '';
+        const conv = (state.conversations || []).find(c => c.id === state.activeConversationId);
+        if (conv) {
+          conv.last_message_preview = text.slice(0, 60);
+          conv.last_message_at = data.created_at;
+        }
+        render();
+        setTimeout(scrollThreadToBottom, 50);
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'start-edit-dm') {
+      state.editingMessageId = target.dataset.messageId;
+      state.messageDraft = target.dataset.content || '';
+      render();
+      const input = document.querySelector('#dm-composer-input');
+      if (input) { input.focus(); input.selectionStart = input.selectionEnd = input.value.length; }
+    }
+    else if (action === 'cancel-edit-dm') {
+      state.editingMessageId = null;
+      state.messageDraft = '';
+      render();
+    }
+    else if (action === 'submit-edit-dm') {
+      const input = document.querySelector('#dm-composer-input');
+      const text = input ? input.value.trim() : '';
+      if (!text || !state.editingMessageId) return;
+      try {
+        const { response, data } = await playerApi(`/api/messages/${state.editingMessageId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ content: text })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not edit message.');
+        const idx = state.activeMessages.findIndex(m => m.id === state.editingMessageId);
+        if (idx !== -1) {
+          state.activeMessages[idx] = { ...state.activeMessages[idx], ...data };
+        }
+        state.editingMessageId = null;
+        state.messageDraft = '';
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'delete-dm') {
+      const msgId = target.dataset.messageId;
+      try {
+        const { response, data } = await playerApi(`/api/messages/${msgId}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not delete message.');
+        const m = state.activeMessages.find(item => item.id === msgId);
+        if (m) {
+          m.is_deleted = true;
+          m.content = '[Message deleted]';
+          m.deleted_at = data.deleted_at;
+        }
+        notify('Message deleted.');
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'toggle-dm-reaction') {
+      const msgId = target.dataset.messageId;
+      const rx = target.dataset.reaction;
+      const msg = state.activeMessages.find(m => m.id === msgId);
+      let alreadyReacted = false;
+      if (msg && msg.reactions) {
+        const val = msg.reactions[rx];
+        if (Array.isArray(val)) alreadyReacted = val.includes(state.profile?.player_id);
+        else if (typeof val === 'object') alreadyReacted = !!val.reacted_by_me;
+      }
+      try {
+        if (alreadyReacted) {
+          const { response, data } = await playerApi(`/api/messages/${msgId}/reactions/${encodeURIComponent(rx)}`, { method: 'DELETE' });
+          if (response.ok && msg) msg.reactions = data.reactions;
+        } else {
+          const { response, data } = await playerApi(`/api/messages/${msgId}/reactions`, {
+            method: 'POST',
+            body: JSON.stringify({ reaction: rx })
+          });
+          if (response.ok && msg) msg.reactions = data.reactions;
+        }
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'start-report-dm') {
+      state.reportingMessageId = target.dataset.messageId;
+      state.reportingReason = 'inappropriate';
+      state.reportingDetails = '';
+      render();
+    }
+    else if (action === 'close-report-modal') {
+      state.reportingMessageId = null;
+      render();
+    }
+    else if (action === 'submit-report-dm') {
+      if (!state.reportingMessageId) return;
+      const reasonSelect = document.querySelector('#report-reason-select');
+      const detailsInput = document.querySelector('#report-details-input');
+      const reason = reasonSelect ? reasonSelect.value : state.reportingReason;
+      const details = detailsInput ? detailsInput.value : state.reportingDetails;
+      try {
+        const { response, data } = await playerApi(`/api/messages/${state.reportingMessageId}/report`, {
+          method: 'POST',
+          body: JSON.stringify({ reason, details: details || null })
+        });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not submit report.');
+        notify('Report submitted. Thank you for keeping QuizVerse safe.');
+        state.reportingMessageId = null;
+        render();
+      } catch (err) { notify(err.message); }
+    }
+    else if (action === 'toggle-room-chat') {
+      state.roomChatOpen = !state.roomChatOpen;
+      if (state.roomChatOpen) state.roomChatUnread = 0;
+      render();
+      if (state.roomChatOpen) {
+        setTimeout(() => {
+          const chatBox = document.querySelector('#room-chat-messages-container');
+          if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+          document.querySelector('#room-chat-input')?.focus();
+        }, 50);
+      }
+    }
+    else if (action === 'send-room-chat') {
+      const input = document.querySelector('#room-chat-input');
+      const text = input ? input.value.trim() : '';
+      if (text) {
+        send('room_chat', { text });
+        if (input) input.value = '';
+      }
+    }
+    else if (action === 'toggle-room-reaction') {
+      const msgId = target.dataset.messageId;
+      const reaction = target.dataset.reaction;
+      send('room_chat_reaction', { message_id: msgId, reaction });
+    }
   });
   app.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.target.id === 'room-code') document.querySelector('[data-action="confirm-join"]')?.click();
     if (event.key === 'Enter' && event.target.id === 'player-name') document.querySelector('[data-action="create"]')?.click();
     if (event.key === 'Enter' && event.target.id === 'player-search-input') document.querySelector('[data-action="exec-player-search"]')?.click();
+    if (event.key === 'Enter' && event.target.id === 'room-chat-input') {
+      event.preventDefault();
+      document.querySelector('[data-action="send-room-chat"]')?.click();
+    }
+    if (event.key === 'Enter' && !event.shiftKey && event.target.id === 'dm-composer-input') {
+      event.preventDefault();
+      if (state.editingMessageId) {
+        document.querySelector('[data-action="submit-edit-dm"]')?.click();
+      } else {
+        document.querySelector('[data-action="send-dm"]')?.click();
+      }
+    }
+  });
+  app.addEventListener('input', event => {
+    if (event.target.id === 'dm-composer-input') {
+      const val = event.target.value;
+      state.messageDraft = val;
+      const countEl = document.querySelector('#dm-char-count');
+      if (countEl) countEl.textContent = `${val.length} / 2000`;
+      if (!state.typingTimer && state.activeConversationId) {
+        void playerApi('/api/messages/typing', {
+          method: 'POST',
+          body: JSON.stringify({ conversation_id: state.activeConversationId, is_typing: true })
+        });
+        state.typingTimer = setTimeout(() => {
+          if (state.activeConversationId) {
+            void playerApi('/api/messages/typing', {
+              method: 'POST',
+              body: JSON.stringify({ conversation_id: state.activeConversationId, is_typing: false })
+            });
+          }
+          state.typingTimer = null;
+        }, 3500);
+      }
+    }
+    if (event.target.id === 'dm-search-input') {
+      state.messageSearchQuery = event.target.value;
+      render();
+    }
+    if (event.target.id === 'report-reason-select') {
+      state.reportingReason = event.target.value;
+    }
+    if (event.target.id === 'report-details-input') {
+      state.reportingDetails = event.target.value;
+    }
   });
   app.addEventListener('change', event => {
     if (event.target.id === 'rating-history-scope') {

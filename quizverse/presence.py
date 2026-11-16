@@ -402,6 +402,63 @@ class PresenceService:
                 **payload,
             })
 
+    async def send_direct_message_notification(self, recipient_id: str, payload: dict[str, Any]) -> bool:
+        """Deliver real-time direct message event to recipient's active presence sockets. Returns True if delivered."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "direct_message_received",
+                **payload,
+            })
+            return True
+        return False
+
+    async def send_direct_message_delivery_receipt(self, sender_id: str, payload: dict[str, Any]) -> None:
+        """Notify sender that message was delivered to an active recipient socket."""
+        if await self.broker.is_player_connected(sender_id):
+            await self.broker.send_to_player(sender_id, {
+                "event": "direct_message_delivered",
+                **payload,
+            })
+
+    async def send_direct_message_read_receipt(self, sender_id: str, payload: dict[str, Any]) -> None:
+        """Notify sender that recipient marked message(s) as read."""
+        if await self.broker.is_player_connected(sender_id):
+            await self.broker.send_to_player(sender_id, {
+                "event": "direct_message_read",
+                **payload,
+            })
+
+    async def send_direct_message_edited(self, recipient_id: str, payload: dict[str, Any]) -> None:
+        """Notify recipient that a message was edited."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "direct_message_edited",
+                **payload,
+            })
+
+    async def send_direct_message_deleted(self, recipient_id: str, payload: dict[str, Any]) -> None:
+        """Notify recipient that a message was deleted."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, {
+                "event": "direct_message_deleted",
+                **payload,
+            })
+
+    async def send_direct_message_reaction(self, player_ids: Iterable[str], payload: dict[str, Any]) -> None:
+        """Broadcast reaction updates to conversation participants."""
+        for pid in set(player_ids):
+            if await self.broker.is_player_connected(pid):
+                await self.broker.send_to_player(pid, {
+                    "event": "direct_message_reaction_updated",
+                    **payload,
+                })
+
+    async def send_typing_indicator(self, recipient_id: str, payload: dict[str, Any]) -> None:
+        """Deliver ephemeral typing event to recipient."""
+        if await self.broker.is_player_connected(recipient_id):
+            await self.broker.send_to_player(recipient_id, payload)
+
+
     async def maintenance_step(self) -> None:
         """Clean up idle sockets exceeding the stale threshold and reconcile activity transitions."""
         stale = await self.broker.cleanup_stale_sockets(self.stale_threshold)

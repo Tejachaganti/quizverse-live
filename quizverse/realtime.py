@@ -41,6 +41,8 @@ from quizverse.protocol import (
     LobbyEvent,
     ReconnectEvent,
     RematchEvent,
+    RoomChatEvent,
+    RoomChatReactionEvent,
     StartEvent,
     EVENT_ADAPTER,
 )
@@ -72,6 +74,9 @@ from quizverse.presence import (
 from quizverse.presence_api import install_presence_api
 from quizverse.persistence.invitations import InvitationService, RematchService
 from quizverse.invitations_api import install_invitations_api
+from quizverse.persistence.messaging import MessagingService
+from quizverse.messaging_api import install_messaging_api
+from quizverse.persistence.player_identity import ProcessRateLimiter
 
 MAX_MESSAGE_BYTES = 4096
 RATE_LIMIT_COUNT = 30
@@ -170,6 +175,15 @@ class ConnectionHub:
             except GameError:
                 continue
             await self.send(websocket, event, state)
+
+    async def broadcast_room_event(self, code: str, event: str, **payload: Any) -> None:
+        async with self.connection_lock:
+            recipients = [ws for identity, ws in self.connections.items() if identity[0] == code]
+        for ws in recipients:
+            try:
+                await ws.send_json({"event": event, **payload})
+            except (RuntimeError, WebSocketDisconnect):
+                pass
 
     async def _profile_for_ticket(self, ticket: str | None) -> str | None:
         if ticket is None:
@@ -323,6 +337,11 @@ def create_app(
         block_service=block_service,
         presence_service=presence_service,
     )
+    messaging_service = MessagingService(
+        database=persistence,
+        friend_service=friend_service,
+        block_service=block_service,
+    )
     hub.invitation_ticket_validator = invitation_service.validate_and_consume_ticket
 
     def _on_friendship_severed(p1: str, p2: str) -> None:
@@ -386,6 +405,7 @@ def create_app(
     app.state.presence_tickets = presence_tickets
     app.state.invitation_service = invitation_service
     app.state.rematch_service = rematch_service
+    app.state.messaging_service = messaging_service
 
     install_quiz_api(app, quiz_access, GenerationService(ai_provider))
     install_player_api(app, player_identities, match_history, player_tickets)
@@ -397,6 +417,7 @@ def create_app(
     install_social_api(app, discovery_service, friend_service, block_service, player_identities)
     install_presence_api(app, presence_service, presence_tickets, player_identities)
     install_invitations_api(app, invitation_service, rematch_service, player_identities, active_engine)
+    install_messaging_api(app, messaging_service, player_identities, presence_service)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:
@@ -416,6 +437,9 @@ def create_app(
         response.headers["x-frame-options"] = "DENY"
         response.headers["permissions-policy"] = "camera=(), microphone=(), geolocation=()"
         return response
+
+    room_chat_limiter = ProcessRateLimiter(limit=10, window_seconds=10)
+    room_chat_reaction_limiter = ProcessRateLimiter(limit=20, window_seconds=60)
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -513,6 +537,20 @@ def create_app(
                                 raise GameError("wrong_phase", "Finish the quiz before returning to the lobby.")
                             await hub.engine.set_lobby(code, player_id, rematch=isinstance(event, RematchEvent))
                             await hub.broadcast_room(code, "lobby")
+                        elif isinstance(event, RoomChatEvent):
+                            allowed, retry_after = room_chat_limiter.allow(player_id)
+                            if not allowed:
+                                raise GameError("rate_limited", f"Chat rate limit exceeded. Please wait {retry_after}s.")
+                            msg = await hub.engine.send_room_chat_message(code, player_id, event.text)
+                            await hub.broadcast_room_event(code, "room_chat_message", **msg)
+                            await hub.broadcast_room(code, "room-chat-update")
+                        elif isinstance(event, RoomChatReactionEvent):
+                            allowed, retry_after = room_chat_reaction_limiter.allow(player_id)
+                            if not allowed:
+                                raise GameError("rate_limited", f"Reaction rate limit exceeded. Please wait {retry_after}s.")
+                            rx_res = await hub.engine.add_room_chat_reaction(code, player_id, event.message_id, event.reaction)
+                            await hub.broadcast_room_event(code, "room_chat_reaction_updated", **rx_res)
+                            await hub.broadcast_room(code, "room-chat-update")
                 except GameError as exc:
                     await hub.send(websocket, "error", code=exc.code, message=exc.message)
                     if identity is not None and exc.state_changed:

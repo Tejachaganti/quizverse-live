@@ -1004,4 +1004,110 @@ class RematchChallenge(Base):
     opponent: Mapped[PlayerProfile] = relationship(foreign_keys=[opponent_id])
 
 
+class DirectConversation(Base):
+    """Canonical 1-on-1 private conversation between two authenticated player profiles.
+
+    Enforces canonical ordering (player_one_id < player_two_id) to ensure exactly one
+    conversation record per pair of friends.
+    """
+
+    __tablename__ = "direct_conversations"
+    __table_args__ = (
+        CheckConstraint("player_one_id < player_two_id", name="ck_direct_conversation_canonical_order"),
+        UniqueConstraint("player_one_id", "player_two_id", name="uq_direct_conversation_pair"),
+        Index("ix_direct_conversations_p1", "player_one_id"),
+        Index("ix_direct_conversations_p2", "player_two_id"),
+        Index("ix_direct_conversations_last_msg", "last_message_at"),
+        Index("ix_direct_conversations_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_one_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    player_two_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_message_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    player_one_unread_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    player_two_unread_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+
+    player_one: Mapped[PlayerProfile] = relationship(foreign_keys=[player_one_id])
+    player_two: Mapped[PlayerProfile] = relationship(foreign_keys=[player_two_id])
+    messages: Mapped[list["DirectMessage"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+
+
+class DirectMessage(Base):
+    """Persistent 1-on-1 direct message between friends."""
+
+    __tablename__ = "direct_messages"
+    __table_args__ = (
+        Index("ix_direct_messages_conv_created", "conversation_id", "created_at"),
+        Index("ix_direct_messages_sender", "sender_id"),
+        Index("ix_direct_messages_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(32), ForeignKey("direct_conversations.id", ondelete="CASCADE"), nullable=False)
+    sender_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    message_type: Mapped[str] = mapped_column(String(16), default="text", server_default="text", nullable=False)
+    content: Mapped[str] = mapped_column(String(2000), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation: Mapped[DirectConversation] = relationship(back_populates="messages")
+    sender: Mapped[PlayerProfile] = relationship(foreign_keys=[sender_id])
+    reactions: Mapped[list["DirectMessageReaction"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+    reports: Mapped[list["MessageReport"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+
+
+class DirectMessageReaction(Base):
+    """Emoji reaction attached to a direct message."""
+
+    __tablename__ = "direct_message_reactions"
+    __table_args__ = (
+        CheckConstraint("reaction IN ('👍', '❤️', '😂', '🔥', '👏', '😮', '😢')", name="ck_direct_message_reaction_allowed"),
+        UniqueConstraint("message_id", "player_id", "reaction", name="uq_direct_message_reaction"),
+        Index("ix_direct_message_reactions_msg", "message_id"),
+        Index("ix_direct_message_reactions_player", "player_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(32), ForeignKey("direct_messages.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    reaction: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    message: Mapped[DirectMessage] = relationship(back_populates="reactions")
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
+
+
+class MessageReport(Base):
+    """User report against an inappropriate direct message."""
+
+    __tablename__ = "message_reports"
+    __table_args__ = (
+        CheckConstraint("reason IN ('harassment', 'spam', 'abuse', 'inappropriate', 'other')", name="ck_message_report_reason"),
+        CheckConstraint("status IN ('pending', 'reviewed', 'dismissed', 'actioned')", name="ck_message_report_status"),
+        UniqueConstraint("reporter_id", "message_id", name="uq_message_report_pair"),
+        Index("ix_message_reports_reporter", "reporter_id"),
+        Index("ix_message_reports_message", "message_id"),
+        Index("ix_message_reports_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    reporter_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    message_id: Mapped[str] = mapped_column(String(32), ForeignKey("direct_messages.id", ondelete="CASCADE"), nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    details: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    reporter: Mapped[PlayerProfile] = relationship(foreign_keys=[reporter_id])
+    message: Mapped[DirectMessage] = relationship(back_populates="reports")
+
+
+
 
