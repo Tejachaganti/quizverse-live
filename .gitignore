@@ -22,6 +22,9 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
 *.log
 logs/
 backups/
@@ -46,6 +49,16 @@ build/
 dist/
 *.egg-info/
 wheelcheck/
+
+# Local keys, certificates and editor configurations
+*.pem
+*.key
+*.cert
+*.crt
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Operating-system temporary files
 .DS_Store
