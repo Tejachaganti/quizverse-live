@@ -3411,10 +3411,18 @@
               <p>Connect with players, manage friendships, and build your competitive circle.</p>
             </div>
           </div>
-          <div class="social-empty-state">
-            <h3>Player Profile Required</h3>
-            <p>You need an active Player Profile to discover friends, send requests, and build your social circle.</p>
-            <button class="btn btn-primary" type="button" data-action="nav-profile">Go to Player Profile</button>
+          <div class="inline-profile-card">
+            <div class="section-kicker">OPTIONAL PLAYER IDENTITY</div>
+            <h3>Create Your Player Profile</h3>
+            <p>Set a player display name below to unlock friend requests, online presence, direct messaging, room invitations, and rematches. Casual play remains available without a profile.</p>
+            <div class="inline-profile-row">
+              <input class="field" id="inline-social-profile-name" maxlength="24" autocomplete="nickname" placeholder="Your player name" value="${escapeHtml(state.name || '')}">
+              <button class="btn btn-primary" type="button" data-action="inline-social-profile-create" ${state.profileLoading ? 'disabled' : ''}>${state.profileLoading ? 'Creating…' : 'Create & Unlock'}</button>
+            </div>
+            ${state.profileNotice ? `<p class="library-message" role="alert" style="margin-top:0.75rem;">${escapeHtml(state.profileNotice)}</p>` : ''}
+            <div class="inline-profile-footer">
+              Already have a saved bearer key? <a href="#" data-action="nav-profile">Sign in with saved credential</a>
+            </div>
           </div>
         </div>
       `;
@@ -5061,15 +5069,28 @@
 
     let bodyHtml = '';
     if (state.intelligenceLoading && !state.intelligenceOverview) {
-      bodyHtml = '<div class="intel-card" style="text-align: center; padding: 2rem;"><p>Loading AI intelligence data…</p></div>';
+      bodyHtml = `
+        <div class="intel-grid">
+          <div class="skeleton-card" style="padding:1.5rem;"><div class="skeleton-line" style="width:40%;"></div><div class="skeleton-line" style="width:80%;"></div><div class="skeleton-line" style="width:60%;"></div></div>
+          <div class="skeleton-card" style="padding:1.5rem;"><div class="skeleton-line" style="width:50%;"></div><div class="skeleton-line" style="width:70%;"></div><div class="skeleton-line" style="width:55%;"></div></div>
+        </div>
+      `;
     } else if (state.intelligenceError && !state.profileCredential) {
       bodyHtml = `
-        <div class="intel-card" style="text-align: center; padding: 2.5rem 1rem;">
-          <h2>🔒 Profile Authentication Required</h2>
-          <p class="intel-card-desc" style="max-width: 480px; margin: 0.5rem auto 1.5rem;">
-            AI intelligence analyzes your personal performance, identifies weaknesses, and generates learning paths. Link or create a player profile to unlock this suite.
+        <div class="inline-profile-card" style="text-align: left; max-width: 680px; margin: 1.5rem auto;">
+          <div class="section-kicker">PERSONALIZED AI LEARNING</div>
+          <h3>Unlock AI Intelligence &amp; Mastery</h3>
+          <p class="intel-card-desc">
+            AI intelligence analyzes your performance, identifies weakness topics, personalizes difficulty, and creates custom curriculums. Set a player name below to initialize your learning profile.
           </p>
-          <button class="btn btn-primary" type="button" data-action="nav-profile">Go to Profile</button>
+          <div class="inline-profile-row">
+            <input class="field" id="inline-intel-profile-name" maxlength="24" autocomplete="nickname" placeholder="Your player name" value="${escapeHtml(state.name || '')}">
+            <button class="btn btn-primary" type="button" data-action="inline-intel-profile-create" ${state.profileLoading ? 'disabled' : ''}>${state.profileLoading ? 'Creating…' : 'Create & Unlock'}</button>
+          </div>
+          ${state.profileNotice ? `<p class="library-message" role="alert" style="margin-top:0.75rem;">${escapeHtml(state.profileNotice)}</p>` : ''}
+          <div class="inline-profile-footer">
+            Already have a saved bearer key? <a href="#" data-action="nav-profile">Sign in with saved credential</a>
+          </div>
         </div>
       `;
     } else {
@@ -5220,6 +5241,32 @@
     if (nickname) {
       state.name = nickname.value.trim();
       sessionStorage.setItem('qv-name', state.name);
+    }
+    if (action === 'inline-social-profile-create' || action === 'inline-intel-profile-create') {
+      const inputId = action === 'inline-social-profile-create' ? '#inline-social-profile-name' : '#inline-intel-profile-name';
+      const displayName = document.querySelector(inputId)?.value.trim() || '';
+      if (!displayName) { notify('Please enter a display name first.'); return; }
+      state.profileLoading = true; state.profileNotice = ''; render();
+      try {
+        const { response, data } = await playerApi('/api/player-profiles', { method: 'POST', body: JSON.stringify({ display_name: displayName }) });
+        if (!response.ok) throw new Error(data?.error?.message || 'Could not create a player profile.');
+        state.profileCredential = data.credential; state.oneTimeCredential = data.credential;
+        state.name = displayName;
+        sessionStorage.setItem('qv-name', displayName);
+        sessionStorage.setItem(PLAYER_CREDENTIAL_KEY, data.credential);
+        state.profileLoading = false;
+        void initPresence();
+        void fetchNotificationUnreadCount();
+        notify('Profile created! Welcome to QuizVerse Live.');
+        if (state.view === 'social') await refreshSocial();
+        else if (state.view === 'intelligence') await refreshIntelligence();
+        else render();
+      } catch (error) {
+        state.profileLoading = false;
+        state.profileNotice = error.message || 'Could not create a player profile.';
+        render();
+      }
+      return;
     }
     if (action === 'profile-create') {
       const displayName = document.querySelector('#profile-create-name')?.value || '';
@@ -6853,6 +6900,70 @@
       void refreshLeagues();
     }
   });
+  function openMobileDrawer() {
+    const drawer = document.getElementById('mobile-nav-drawer');
+    const backdrop = document.getElementById('mobile-nav-backdrop');
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    if (drawer) {
+      drawer.classList.add('open');
+      drawer.setAttribute('aria-hidden', 'false');
+    }
+    if (backdrop) {
+      backdrop.classList.add('open');
+      backdrop.setAttribute('aria-hidden', 'false');
+    }
+    if (menuBtn) {
+      menuBtn.setAttribute('aria-expanded', 'true');
+    }
+    const closeBtn = document.getElementById('mobile-drawer-close');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function closeMobileDrawer() {
+    const drawer = document.getElementById('mobile-nav-drawer');
+    const backdrop = document.getElementById('mobile-nav-backdrop');
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    if (drawer) {
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+    }
+    if (backdrop) {
+      backdrop.classList.remove('open');
+      backdrop.setAttribute('aria-hidden', 'true');
+    }
+    if (menuBtn) {
+      menuBtn.setAttribute('aria-expanded', 'false');
+    }
+  }
+
+  function toggleMobileDrawer() {
+    const drawer = document.getElementById('mobile-nav-drawer');
+    if (drawer && drawer.classList.contains('open')) {
+      closeMobileDrawer();
+    } else {
+      openMobileDrawer();
+    }
+  }
+
+  function switchView(viewName) {
+    if (!viewName) return;
+    state.view = viewName;
+    state.screen = '';
+    closeMobileDrawer();
+    try {
+      history.pushState({ view: state.view }, '', '');
+    } catch (_) {}
+    setActiveNavigation();
+    if (state.view === 'profile') void refreshProfile();
+    else if (state.view === 'rankings') void refreshRankings();
+    else if (state.view === 'tournaments') void refreshTournaments();
+    else if (state.view === 'leagues') void refreshLeagues();
+    else if (state.view === 'social') void refreshSocial();
+    else if (state.view === 'intelligence') void refreshIntelligence();
+    else if (state.view === 'community') void refreshCommunity();
+    else render();
+  }
+
   function setActiveNavigation() {
     document.querySelectorAll('[data-view]').forEach(button => {
       const active = button.dataset.view === state.view;
@@ -6862,6 +6973,27 @@
     });
   }
   document.addEventListener('click', async event => {
+    const mobileMenuTrigger = event.target.closest('[data-action="toggle-mobile-menu"], #mobile-menu-btn');
+    if (mobileMenuTrigger) {
+      event.preventDefault();
+      toggleMobileDrawer();
+      return;
+    }
+
+    const mobileCloseTrigger = event.target.closest('[data-action="close-mobile-menu"], #mobile-drawer-close, #mobile-nav-backdrop');
+    if (mobileCloseTrigger) {
+      event.preventDefault();
+      closeMobileDrawer();
+      return;
+    }
+
+    const brandTrigger = event.target.closest('header .brand');
+    if (brandTrigger) {
+      event.preventDefault();
+      switchView('play');
+      return;
+    }
+
     const bellBtn = event.target.closest('[data-action="toggle-notif-center"], #notif-bell-btn');
     if (bellBtn) {
       event.preventDefault();
@@ -7036,26 +7168,41 @@
     }
   });
 
-  document.querySelector('#primary-navigation').addEventListener('click', event => {
-    const button = event.target.closest('[data-view]');
-    if (!button) return;
-    state.view = button.dataset.view;
-    state.screen = '';
-    try {
-      history.pushState({ view: state.view }, '', '');
-    } catch (_) {}
-    setActiveNavigation();
-    if (state.view === 'profile') void refreshProfile();
-    else if (state.view === 'rankings') void refreshRankings();
-    else if (state.view === 'tournaments') void refreshTournaments();
-    else if (state.view === 'leagues') void refreshLeagues();
-    else if (state.view === 'social') void refreshSocial();
-    else if (state.view === 'intelligence') void refreshIntelligence();
-    else if (state.view === 'community') void refreshCommunity();
-    else render();
+  const primaryNav = document.querySelector('#primary-navigation');
+  if (primaryNav) {
+    primaryNav.addEventListener('click', event => {
+      const button = event.target.closest('[data-view]');
+      if (!button) return;
+      switchView(button.dataset.view);
+    });
+  }
+
+  const mobileNavDrawer = document.querySelector('#mobile-nav-drawer');
+  if (mobileNavDrawer) {
+    mobileNavDrawer.addEventListener('click', event => {
+      const button = event.target.closest('[data-view]');
+      if (!button) return;
+      switchView(button.dataset.view);
+    });
+  }
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      const drawer = document.getElementById('mobile-nav-drawer');
+      if (drawer && drawer.classList.contains('open')) {
+        closeMobileDrawer();
+        const menuBtn = document.getElementById('mobile-menu-btn');
+        if (menuBtn) menuBtn.focus();
+      }
+      if (state.notifCenterOpen) {
+        state.notifCenterOpen = false;
+        renderNotificationCenter();
+      }
+    }
   });
 
   window.addEventListener('popstate', event => {
+    closeMobileDrawer();
     if (state.communityAuthoringQuiz || state.communityEditingProfile || state.communityCreatingCollection) {
       state.communityAuthoringQuiz = false;
       state.communityEditingProfile = false;
