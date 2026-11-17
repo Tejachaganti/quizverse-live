@@ -1,0 +1,70 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: quizverse-live
+  labels:
+    cloud.googleapis.com/location: us-central1
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/description: "QuizVerse Live authoritative multiplayer trivia arena"
+spec:
+  template:
+    metadata:
+      annotations:
+        # Enforce single-instance deployment to preserve in-memory GameEngine and presence state
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "1"
+        # Support long-lived WebSocket sessions up to 60 minutes
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/timeout: "3600s"
+    spec:
+      containerConcurrency: 200
+      timeoutSeconds: 3600
+      serviceAccountName: quizverse-service-sa@PROJECT_ID.iam.gserviceaccount.com
+      containers:
+      - image: gcr.io/PROJECT_ID/quizverse-live:latest
+        ports:
+        - name: http1
+          containerPort: 8000
+        resources:
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "8000"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: DB_POOL_SIZE
+          value: "10"
+        - name: DB_MAX_OVERFLOW
+          value: "20"
+        - name: ALLOWED_ORIGINS
+          value: "https://your-domain.com,https://quizverse-live.a.run.app,capacitor://localhost,http://localhost"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: quizverse-database-url
+              key: latest
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: quizverse-gemini-api-key
+              key: latest
+        startupProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 15
+          timeoutSeconds: 5

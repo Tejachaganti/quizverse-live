@@ -12,7 +12,10 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
@@ -417,6 +420,15 @@ def create_app(
                 persistence.close()
 
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
+    cors_origins_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
+    cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins if cors_origins else ["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.hub = hub
     app.state.engine = active_engine
     app.state.database = persistence
@@ -473,8 +485,23 @@ def create_app(
         persistence_health = await active_engine.match_history_persistence_health()
         return {"ok": True, "service": "quizverse-live", **persistence_health}
 
+    @app.get("/ready", tags=["health"])
+    async def readiness_probe(response: Response) -> dict[str, object]:
+        db_status = await asyncio.to_thread(persistence.check_readiness)
+        history_health = await active_engine.match_history_persistence_health()
+        is_ready = bool(db_status.get("connected", False)) and ("pending_match_history" in history_health)
+        if not is_ready:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "ready": is_ready,
+            "service": "quizverse-live",
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "database": db_status,
+            "engine": history_health,
+        }
+
     @app.middleware("http")
-    async def security_headers(request, call_next):
+    async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers["content-security-policy"] = (
             "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
@@ -485,7 +512,25 @@ def create_app(
         response.headers["referrer-policy"] = "strict-origin-when-cross-origin"
         response.headers["x-frame-options"] = "DENY"
         response.headers["permissions-policy"] = "camera=(), microphone=(), geolocation=()"
+        if request.url.scheme == "https" or os.getenv("ENVIRONMENT", "").strip().lower() == "production":
+            response.headers["strict-transport-security"] = "max-age=31536000; includeSubDomains"
         return response
+
+    @app.exception_handler(Exception)
+    async def production_exception_handler(request: Request, exc: Exception):
+        if isinstance(exc, HTTPException):
+            return await http_exception_handler(request, exc)
+        logger.exception("Unhandled server exception: %s", type(exc).__name__)
+        env_mode = (os.getenv("ENVIRONMENT") or os.getenv("ENV") or "").strip().lower()
+        if env_mode == "production":
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"ok": False, "error": "Internal server error"},
+            )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"ok": False, "error": str(exc), "type": type(exc).__name__},
+        )
 
     room_chat_limiter = ProcessRateLimiter(limit=10, window_seconds=10)
     room_chat_reaction_limiter = ProcessRateLimiter(limit=20, window_seconds=60)

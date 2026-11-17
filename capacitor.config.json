@@ -1,0 +1,27 @@
+{
+  "appId": "com.quizverse.app",
+  "appName": "QuizVerse Live",
+  "webDir": "quizverse/static",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false,
+    "allowNavigation": [
+      "localhost",
+      "127.0.0.1",
+      "*.run.app"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": true,
+      "backgroundColor": "#0f172a"
+    }
+  }
+}

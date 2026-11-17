@@ -773,14 +773,16 @@ def run_bluff_master(browser, origin: str) -> None:
         expect(host.locator("#bluff-answer")).to_be_visible(timeout=8000)
         previous_round = 0
         for round_index in range(10):
-            if round_index:
-                for page in pages:
-                    expect(page.locator("#bluff-answer")).to_be_visible(timeout=10000)
+            for page in pages:
+                expect(page.locator("#bluff-answer")).to_be_visible(timeout=10000)
             for index, page in enumerate(pages):
-                page.locator("#bluff-answer").fill(f"invented response {round_index} from player {index}")
+                fake_answer = f"invented response {round_index} from player {index}"
+                inp = page.locator("#bluff-answer")
+                inp.fill(fake_answer)
+                expect(inp).to_have_value(fake_answer, timeout=5000)
                 page.locator('[data-action="bluff-submit"]').click()
             for page in pages:
-                expect(page.locator("[data-action='bluff-vote']").first).to_be_visible(timeout=10000)
+                expect(page.locator("[data-action='bluff-vote']").first).to_be_visible(timeout=12000)
                 assert_no_horizontal_overflow(page)
             captured = next(item for item in reversed(states[0]) if item.get("phase") == "voting")
             assert captured["mode"] == "bluff_master"

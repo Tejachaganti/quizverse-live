@@ -155,6 +155,8 @@ class NotificationService:
 
     def _dispatch_task(self, coro: Any) -> None:
         if self.presence_service is None:
+            if hasattr(coro, "close"):
+                coro.close()
             return
         if hasattr(self.presence_service, "safe_dispatch"):
             self.presence_service.safe_dispatch(coro)
@@ -163,7 +165,8 @@ class NotificationService:
             loop = asyncio.get_running_loop()
             loop.create_task(coro)
         except RuntimeError:
-            pass
+            if hasattr(coro, "close"):
+                coro.close()
 
     def _serialize_notification(self, notif: PlayerNotification, actor_name: str | None = None) -> dict[str, Any]:
         meta = {}

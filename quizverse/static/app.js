@@ -5398,7 +5398,7 @@
     else if (action === 'answer') send('answer', { choice: Number(target.dataset.choice) });
     else if (action === 'ability') send('ability', { ability: target.dataset.ability, request_id: crypto.randomUUID() });
     else if (action === 'bluff-submit') {
-      const answer = document.querySelector('#bluff-answer')?.value || '';
+      const answer = target.closest('.quiz-card')?.querySelector('#bluff-answer')?.value || document.querySelector('#bluff-answer')?.value || '';
       if (!answer.trim()) { notify('Enter a fake answer first.'); return; }
       send('bluff_submit', { answer, request_id: crypto.randomUUID() });
     }
@@ -7041,6 +7041,9 @@
     if (!button) return;
     state.view = button.dataset.view;
     state.screen = '';
+    try {
+      history.pushState({ view: state.view }, '', '');
+    } catch (_) {}
     setActiveNavigation();
     if (state.view === 'profile') void refreshProfile();
     else if (state.view === 'rankings') void refreshRankings();
@@ -7050,6 +7053,26 @@
     else if (state.view === 'intelligence') void refreshIntelligence();
     else if (state.view === 'community') void refreshCommunity();
     else render();
+  });
+
+  window.addEventListener('popstate', event => {
+    if (state.communityAuthoringQuiz || state.communityEditingProfile || state.communityCreatingCollection) {
+      state.communityAuthoringQuiz = false;
+      state.communityEditingProfile = false;
+      state.communityCreatingCollection = false;
+      render();
+      return;
+    }
+    if (state.notifCenterOpen) {
+      state.notifCenterOpen = false;
+      renderNotificationCenter();
+      return;
+    }
+    if (event.state && event.state.view) {
+      state.view = event.state.view;
+      setActiveNavigation();
+      render();
+    }
   });
   setActiveNavigation();
   if (state.profileCredential) {

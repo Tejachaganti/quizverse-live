@@ -24,6 +24,8 @@ htmlcov/
 *.sqlite3
 *.log
 logs/
+backups/
+*.dump
 
 # Browser automation artifacts
 test-results/

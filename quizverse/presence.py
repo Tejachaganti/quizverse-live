@@ -221,8 +221,12 @@ class PresenceService:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
+                if hasattr(coro, "close"):
+                    coro.close()
                 return
         if loop.is_closed():
+            if hasattr(coro, "close"):
+                coro.close()
             return
         try:
             current_loop = asyncio.get_running_loop()
