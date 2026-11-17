@@ -151,6 +151,31 @@
     intelligenceQuestionAnalysis: null,
     intelligenceLoading: false,
     intelligenceError: '',
+    communityTab: 'discover',
+    communityOverview: null,
+    communitySearchResults: null,
+    communityCreators: [],
+    communityMyQuizzes: [],
+    communityMyProfile: null,
+    communityFavorites: [],
+    communityCollections: [],
+    communityActiveCollection: null,
+    communityActiveQuiz: null,
+    communityActiveReviews: [],
+    communityModerationReports: [],
+    communityModerationAudit: [],
+    communitySearchQuery: '',
+    communityFilterCategory: '',
+    communityFilterDifficulty: '',
+    communitySortBy: 'recent',
+    communityLoading: false,
+    communityError: '',
+    communityIsModerator: false,
+    communityActiveReportTarget: null,
+    communityAnalyticsModal: null,
+    communityEditingProfile: false,
+    communityAuthoringQuiz: false,
+    communityCreatingCollection: false,
   };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -4156,6 +4181,881 @@
     `;
   }
 
+  async function refreshCommunity(renderBeforeFetch = true) {
+    state.communityLoading = true;
+    state.communityError = '';
+    if (renderBeforeFetch) render();
+    try {
+      if (state.profileCredential) {
+        try {
+          const modRes = await playerApi('/api/community/moderation/reports?limit=1');
+          state.communityIsModerator = modRes.response.ok;
+        } catch { state.communityIsModerator = false; }
+      } else {
+        state.communityIsModerator = false;
+      }
+
+      const tab = state.communityTab || 'discover';
+      if (tab === 'discover') {
+        const { response, data } = await playerApi('/api/community/overview');
+        if (response.ok) state.communityOverview = data;
+      } else if (tab === 'explore') {
+        const q = state.communitySearchQuery || '';
+        const cat = state.communityFilterCategory || '';
+        const diff = state.communityFilterDifficulty || '';
+        const sort = state.communitySortBy || 'recent';
+        const url = `/api/community/quizzes?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&difficulty=${encodeURIComponent(diff)}&sort_by=${encodeURIComponent(sort)}`;
+        const { response, data } = await playerApi(url);
+        if (response.ok) state.communitySearchResults = data;
+      } else if (tab === 'creators') {
+        const { response, data } = await playerApi('/api/community/creators');
+        if (response.ok) state.communityCreators = data || [];
+      } else if (tab === 'studio') {
+        if (state.profileCredential) {
+          const profRes = await playerApi('/api/community/creators/me');
+          if (profRes.response.ok) {
+            state.communityMyProfile = profRes.data;
+            const qRes = await playerApi(`/api/community/creators/${profRes.data.creator_id}/quizzes`);
+            if (qRes.response.ok) state.communityMyQuizzes = qRes.data || [];
+          }
+        }
+      } else if (tab === 'favorites') {
+        if (state.profileCredential) {
+          const { response, data } = await playerApi('/api/community/favorites');
+          if (response.ok) state.communityFavorites = data || [];
+        }
+      } else if (tab === 'collections') {
+        const { response, data } = await playerApi('/api/community/collections');
+        if (response.ok) state.communityCollections = data || [];
+      } else if (tab === 'moderation') {
+        if (state.communityIsModerator) {
+          const [repRes, auditRes] = await Promise.all([
+            playerApi('/api/community/moderation/reports'),
+            playerApi('/api/community/moderation/audit'),
+          ]);
+          if (repRes.response.ok) state.communityModerationReports = repRes.data?.items || [];
+          if (auditRes.response.ok) state.communityModerationAudit = auditRes.data || [];
+        }
+      }
+    } catch (err) {
+      state.communityError = err.message || 'Failed to load community data.';
+    } finally {
+      state.communityLoading = false;
+      render();
+    }
+  }
+
+  function renderCommQuizCard(q) {
+    const isFav = (state.communityFavorites || []).some(f => f.quiz_id === q.quiz_id);
+    return `
+      <div class="comm-card" data-quiz-id="${escapeHtml(q.quiz_id)}">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;">
+          <span class="comm-badge comm-badge-plays" style="text-transform: uppercase;">${escapeHtml(q.difficulty || 'medium')}</span>
+          <div style="display: flex; gap: 0.35rem;">
+            <span class="comm-badge comm-badge-rating">★ ${q.average_rating || 0} (${q.total_reviews || 0})</span>
+            <span class="comm-badge" style="background: #111326; color: #8588ae;">${q.total_plays || 0} plays</span>
+          </div>
+        </div>
+
+        <div class="comm-card-title">${escapeHtml(q.title || 'Untitled Quiz')}</div>
+        <div class="comm-card-desc">${escapeHtml(q.description || 'No description provided.')}</div>
+
+        <div class="comm-card-meta">
+          <span>Category: <strong style="color: #fff;">${escapeHtml(q.category || 'General')}</strong></span>
+          <span>By: <strong style="color: #a78bfa;">${escapeHtml(q.creator_display_name || 'Creator')}</strong></span>
+        </div>
+
+        ${q.quality_score ? `
+          <div style="font-size: 0.74rem; color: #4ade80; display: flex; align-items: center; gap: 4px;">
+            <span>🧠 AI Quality Assessed:</span> <strong>${Math.round(q.quality_score)}/100</strong>
+          </div>
+        ` : ''}
+
+        <div style="display: flex; gap: 0.4rem; margin-top: auto; padding-top: 0.5rem; flex-wrap: wrap;">
+          <button class="btn btn-primary" style="flex: 1;" type="button" data-action="play-community-quiz" data-quiz-id="${escapeHtml(q.quiz_id)}">
+            ▶ Play
+          </button>
+          <button class="btn btn-secondary" type="button" data-action="toggle-favorite" data-quiz-id="${escapeHtml(q.quiz_id)}" title="Save Quiz">
+            ${isFav ? '★ Saved' : '☆ Save'}
+          </button>
+          <button class="btn btn-secondary" type="button" data-action="open-quiz-reviews" data-quiz-id="${escapeHtml(q.quiz_id)}" data-quiz-title="${escapeHtml(q.title)}" title="Reviews">
+            💬
+          </button>
+          <button class="btn btn-secondary" type="button" data-action="share-community-quiz" data-quiz-id="${escapeHtml(q.quiz_id)}" data-slug="${escapeHtml(q.share_slug || '')}" title="Share">
+            🔗
+          </button>
+          <button class="btn btn-secondary" style="color: #f87171;" type="button" data-action="open-report-modal" data-target-type="quiz" data-target-id="${escapeHtml(q.quiz_id)}" title="Report">
+            🚩
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCommDiscover() {
+    const ov = state.communityOverview || {};
+    const featured = ov.featured || [];
+    const trending = ov.trending || [];
+    const popular = ov.popular || [];
+    const recent = ov.recent || [];
+
+    return `
+      <div style="display: flex; flex-direction: column; gap: 2rem;">
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem;">
+            <h2 style="font-size: 1.25rem; color: #fff; margin: 0;">✨ Featured Quizzes</h2>
+            <span style="font-size: 0.8rem; color: #8588ae;">Curated high-quality community picks</span>
+          </div>
+          ${featured.length > 0 ? `
+            <div class="comm-grid">${featured.map(renderCommQuizCard).join('')}</div>
+          ` : '<div class="comm-card"><p class="comm-card-desc">No featured quizzes yet. Be the first to publish!</p></div>'}
+        </div>
+
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem;">
+            <h2 style="font-size: 1.25rem; color: #fff; margin: 0;">🔥 Trending This Week</h2>
+            <span style="font-size: 0.8rem; color: #8588ae;">Most active players and verified attempts (last 7 days)</span>
+          </div>
+          ${trending.length > 0 ? `
+            <div class="comm-grid">${trending.map(renderCommQuizCard).join('')}</div>
+          ` : '<div class="comm-card"><p class="comm-card-desc">Play community quizzes to spark the trending chart!</p></div>'}
+        </div>
+
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem;">
+            <h2 style="font-size: 1.25rem; color: #fff; margin: 0;">👑 All-Time Popular</h2>
+            <span style="font-size: 0.8rem; color: #8588ae;">Top played quizzes across the ecosystem</span>
+          </div>
+          ${popular.length > 0 ? `
+            <div class="comm-grid">${popular.map(renderCommQuizCard).join('')}</div>
+          ` : '<div class="comm-card"><p class="comm-card-desc">No popular quizzes recorded yet.</p></div>'}
+        </div>
+
+        <div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.75rem;">
+            <h2 style="font-size: 1.25rem; color: #fff; margin: 0;">⚡ Recently Published</h2>
+            <span style="font-size: 0.8rem; color: #8588ae;">Fresh challenges from the community</span>
+          </div>
+          ${recent.length > 0 ? `
+            <div class="comm-grid">${recent.map(renderCommQuizCard).join('')}</div>
+          ` : '<div class="comm-card"><p class="comm-card-desc">No recent quizzes.</p></div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCommExplore() {
+    const res = state.communitySearchResults || { items: [], total: 0 };
+    const items = res.items || [];
+
+    return `
+      <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+        <form id="comm-search-form" class="comm-filter-bar" onsubmit="event.preventDefault();">
+          <input id="comm-search-input" type="search" placeholder="Search by title, description, creator, or topic…" value="${escapeHtml(state.communitySearchQuery || '')}" style="flex: 2; min-width: 200px;" />
+          
+          <select id="comm-filter-difficulty" style="min-width: 120px;">
+            <option value="">All Difficulties</option>
+            <option value="easy" ${state.communityFilterDifficulty === 'easy' ? 'selected' : ''}>Easy</option>
+            <option value="medium" ${state.communityFilterDifficulty === 'medium' ? 'selected' : ''}>Medium</option>
+            <option value="hard" ${state.communityFilterDifficulty === 'hard' ? 'selected' : ''}>Hard</option>
+          </select>
+
+          <select id="comm-sort-by" style="min-width: 130px;">
+            <option value="recent" ${state.communitySortBy === 'recent' ? 'selected' : ''}>Recently Published</option>
+            <option value="popular" ${state.communitySortBy === 'popular' ? 'selected' : ''}>Most Played</option>
+            <option value="top_rated" ${state.communitySortBy === 'top_rated' ? 'selected' : ''}>Top Rated</option>
+          </select>
+
+          <button class="btn btn-primary" type="button" data-action="exec-comm-search">Search</button>
+        </form>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: #8588ae;">
+          <span>Found <strong>${res.total || 0}</strong> community quizzes</span>
+        </div>
+
+        ${items.length > 0 ? `
+          <div class="comm-grid">${items.map(renderCommQuizCard).join('')}</div>
+        ` : `
+          <div class="comm-card" style="text-align: center; padding: 2.5rem 1rem;">
+            <h2>🔍 No matching quizzes found</h2>
+            <p class="comm-card-desc" style="max-width: 450px; margin: 0.5rem auto 1rem;">
+              Try refining your search terms, removing difficulty filters, or browsing our curated discovery tray.
+            </p>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function renderCommCreators() {
+    const creators = state.communityCreators || [];
+
+    return `
+      <div>
+        <div style="margin-bottom: 1.25rem;">
+          <h2 style="font-size: 1.3rem; color: #fff; margin: 0;">🌟 Featured Community Creators</h2>
+          <div style="font-size: 0.82rem; color: #8588ae;">Follow top educators and authors to receive real-time notifications when they publish new quizzes.</div>
+        </div>
+
+        ${creators.length > 0 ? `
+          <div class="comm-grid">
+            ${creators.map(c => `
+              <div class="comm-card comm-creator-card">
+                <div style="display: flex; gap: 0.85rem; align-items: center;">
+                  <div class="creator-avatar" style="width: 48px; height: 48px; font-size: 1.2rem;">
+                    ${escapeHtml((c.creator_display_name || 'C')[0].toUpperCase())}
+                  </div>
+                  <div>
+                    <div style="font-weight: 700; color: #fff; font-size: 1rem;">${escapeHtml(c.creator_display_name)}</div>
+                    <div class="comm-badge-plays" style="font-size: 0.76rem; color: #8588ae;">👥 ${c.follower_count || 0} followers &bull; 🎮 ${c.total_plays || 0} plays</div>
+                  </div>
+                </div>
+
+                <div class="comm-card-desc" style="margin-top: 0.4rem;">
+                  ${escapeHtml(c.creator_bio || 'Passionate quiz author and community contributor.')}
+                </div>
+
+                ${(c.specializations || []).length > 0 ? `
+                  <div class="creator-specs">
+                    ${c.specializations.map(s => `<span class="creator-spec-pill">${escapeHtml(s)}</span>`).join('')}
+                  </div>
+                ` : ''}
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 0.5rem;">
+                  <span class="comm-badge comm-badge-rating">★ ${c.average_rating || 0} (${c.total_reviews || 0})</span>
+                  <button class="btn btn-primary" type="button" data-action="toggle-follow-creator" data-creator-id="${escapeHtml(c.creator_id)}" data-id="${escapeHtml(c.creator_id)}">
+                    + Follow
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="comm-card" style="text-align: center; padding: 2.5rem 1rem;">
+            <h2>👤 No creators found yet</h2>
+            <p class="comm-card-desc">Publish your first quiz in Creator Studio to join the global creator roster!</p>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function renderCommStudio() {
+    if (!state.profileCredential) {
+      return `
+        <div class="comm-card" style="text-align: center; padding: 2.5rem 1rem;">
+          <h2>🔒 Creator Authentication Required</h2>
+          <p class="comm-card-desc" style="max-width: 480px; margin: 0.5rem auto 1.5rem;">
+            Creator Studio lets you author custom quizzes, validate questions with AI, and track verified play analytics. Sign in or create a player profile to unlock Creator Studio.
+          </p>
+          <button class="btn btn-primary" type="button" data-action="nav-profile">Go to Profile</button>
+        </div>
+      `;
+    }
+
+    const p = state.communityMyProfile || {};
+    const quizzes = state.communityMyQuizzes || [];
+
+    return `
+      <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <div class="creator-hero-card comm-hero">
+          <div class="creator-avatar">${escapeHtml((p.creator_display_name || state.profile?.display_name || 'C')[0].toUpperCase())}</div>
+          <div class="creator-meta comm-hero-bio">
+            <h2 style="margin: 0; color: #fff; font-size: 1.4rem;">${escapeHtml(p.creator_display_name || state.profile?.display_name || 'Creator')}</h2>
+            <div class="comm-hero-bio-text" style="font-size: 0.82rem; color: #a5a8ce; margin: 0.25rem 0;">
+              ${escapeHtml(p.creator_bio || 'No bio set. Introduce yourself to players and students!')}
+            </div>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; font-size: 0.8rem; color: #8588ae;">
+              <span>📚 <strong>${p.published_quiz_count || 0}</strong> Published</span>
+              <span>🎮 <strong>${p.total_plays || 0}</strong> Plays</span>
+              <span>⭐ <strong>${p.average_rating || 0}</strong> Rating</span>
+              <span class="comm-badge-plays">👥 <strong>${p.follower_count || 0}</strong> Followers</span>
+            </div>
+          </div>
+          <div>
+            <button class="btn btn-secondary" type="button" data-action="toggle-edit-creator-profile">✏️ Edit Bio &amp; Tags</button>
+          </div>
+        </div>
+
+        <div id="comm-edit-profile-box" class="comm-card" style="display: ${state.communityEditingProfile ? 'block' : 'none'};">
+          <h3>✏️ Update Creator Profile</h3>
+          <form id="comm-edit-creator-form" style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Display Name:</label>
+              <input id="comm-creator-name-inp" class="form-control" type="text" value="${escapeHtml(p.creator_display_name || '')}" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+            </div>
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Biography:</label>
+              <textarea id="comm-profile-bio" name="comm-creator-bio-inp" class="form-control" rows="2" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;">${escapeHtml(p.creator_bio || '')}</textarea>
+            </div>
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Specializations (comma separated):</label>
+              <input id="comm-profile-specialty" name="comm-creator-specs-inp" class="form-control" type="text" value="${escapeHtml((p.specializations || []).join(', '))}" placeholder="e.g. Science, Mathematics, History" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+            </div>
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Website / Links:</label>
+              <input id="comm-profile-website" class="form-control" type="text" placeholder="https://..." style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-primary" type="button" data-action="save-creator-profile">Save Profile</button>
+              <button class="btn btn-secondary" type="button" data-action="toggle-edit-creator-profile">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="comm-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+            <div>
+              <h3 style="margin: 0; font-size: 1.15rem; color: #fff;">✍️ Quick Quiz Authoring &amp; Publishing</h3>
+              <div style="font-size: 0.8rem; color: #8588ae;">Write a quiz to test pre-publication validation, AI quality check, and instant community publishing.</div>
+            </div>
+            <button class="btn btn-secondary" type="button" data-action="toggle-quick-author-form">Toggle Form</button>
+          </div>
+
+          <form id="comm-quick-author-form" style="display: ${state.communityAuthoringQuiz ? 'flex' : 'none'}; flex-direction: column; gap: 0.85rem; margin-top: 1rem;">
+            <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 0.75rem;">
+              <div>
+                <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Quiz Title:</label>
+                <input id="comm-new-quiz-title" name="studio-q-title" class="form-control" type="text" placeholder="e.g. Deep Sea Creatures 101" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Category:</label>
+                <input id="comm-new-quiz-category" name="studio-q-category" class="form-control" type="text" placeholder="e.g. Oceanography" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+              </div>
+              <div>
+                <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Difficulty:</label>
+                <select id="comm-new-quiz-difficulty" name="studio-q-diff" class="form-control" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;">
+                  <option value="easy">Easy</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Description:</label>
+              <input id="comm-new-quiz-desc" class="form-control" type="text" placeholder="Quiz summary..." style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+            </div>
+
+            <div style="background: #111326; padding: 0.85rem; border-radius: 8px; border: 1px solid #212447;">
+              <strong style="color: #7c5cff; font-size: 0.88rem;">Question 1:</strong>
+              <input id="comm-new-q1-text" name="studio-q1-prompt" class="form-control" type="text" placeholder="Question prompt..." style="width: 100%; box-sizing: border-box; background: #0c0e1e; border: 1px solid #2b2e54; color: #fff; padding: 0.45rem; border-radius: 6px; margin: 0.35rem 0;" />
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                <input id="comm-new-q1-a1" name="studio-q1-o0" class="form-control" type="text" placeholder="Option A" style="background: #0c0e1e; border: 1px solid #2b2e54; color: #fff; padding: 0.4rem; border-radius: 6px;" />
+                <input id="comm-new-q1-a2" name="studio-q1-o1" class="form-control" type="text" placeholder="Option B" style="background: #0c0e1e; border: 1px solid #2b2e54; color: #fff; padding: 0.4rem; border-radius: 6px;" />
+                <input id="comm-new-q1-a3" name="studio-q1-o2" class="form-control" type="text" placeholder="Option C" style="background: #0c0e1e; border: 1px solid #2b2e54; color: #fff; padding: 0.4rem; border-radius: 6px;" />
+                <input id="comm-new-q1-a4" name="studio-q1-o3" class="form-control" type="text" placeholder="Option D" style="background: #0c0e1e; border: 1px solid #2b2e54; color: #fff; padding: 0.4rem; border-radius: 6px;" />
+              </div>
+            </div>
+
+            <div>
+              <button class="btn btn-primary" type="button" data-action="studio-quick-create">
+                🚀 Validate &amp; Publish Quiz
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div>
+          <h3 style="font-size: 1.2rem; color: #fff; margin-bottom: 0.75rem;">My Authoring Portfolio (${quizzes.length})</h3>
+          ${quizzes.length > 0 ? `
+            <div class="comm-grid">
+              ${quizzes.map(q => {
+                const badgeClass = q.status === 'published' ? 'comm-badge-pub' : q.status === 'suspended' ? 'comm-badge-suspended' : q.status === 'pending_review' ? 'comm-badge-pending' : 'comm-badge-draft';
+                return `
+                  <div class="comm-card">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span class="comm-badge ${badgeClass}" style="text-transform: uppercase;">${escapeHtml(q.status)}</span>
+                      <span class="comm-badge" style="background: #111326; color: #8588ae;">${escapeHtml(q.visibility)}</span>
+                    </div>
+
+                    <div class="comm-card-title">${escapeHtml(q.title)}</div>
+                    <div class="comm-card-desc">${escapeHtml(q.description || 'Custom quiz item.')}</div>
+
+                    <div class="comm-card-meta">
+                      <span>Category: <strong style="color: #fff;">${escapeHtml(q.category)}</strong></span>
+                      <span class="comm-badge-plays">Plays: <strong style="color: #4ade80;">${q.total_plays || 0}</strong> &bull; ★ ${q.average_rating || 0}</span>
+                    </div>
+
+                    <div style="display: flex; gap: 0.4rem; margin-top: auto; padding-top: 0.5rem; flex-wrap: wrap;">
+                      ${q.status === 'published' ? `
+                        <button class="btn btn-secondary" style="flex: 1;" type="button" data-action="studio-unpublish-quiz" data-quiz-id="${escapeHtml(q.quiz_id)}">
+                          Unpublish
+                        </button>
+                      ` : `
+                        <button class="btn btn-primary" style="flex: 1;" type="button" data-action="studio-publish-quiz" data-quiz-id="${escapeHtml(q.quiz_id)}">
+                          Publish
+                        </button>
+                      `}
+                      <button class="btn btn-secondary" type="button" data-action="open-creator-analytics" data-creator-id="${escapeHtml(p.creator_id)}" title="Analytics">
+                        📊
+                      </button>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <div class="comm-card"><p class="comm-card-desc">You have not created any quizzes yet. Use the quick authoring tool above to publish your first one!</p></div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCommFavorites() {
+    const favs = state.communityFavorites || [];
+
+    return `
+      <div>
+        <div style="margin-bottom: 1.25rem;">
+          <h2 style="font-size: 1.3rem; color: #fff; margin: 0;">⭐ Saved Quizzes (${favs.length})</h2>
+          <div style="font-size: 0.82rem; color: #8588ae;">Your private personal bookmarks for quick practice and revision.</div>
+        </div>
+
+        ${favs.length > 0 ? `
+          <div class="comm-grid">
+            ${favs.map(f => `
+              <div class="comm-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="comm-badge comm-badge-plays" style="text-transform: uppercase;">${escapeHtml(f.difficulty)}</span>
+                  <span class="comm-badge comm-badge-rating">★ ${f.average_rating || 0}</span>
+                </div>
+
+                <div class="comm-card-title">${escapeHtml(f.title)}</div>
+                <div class="comm-card-desc">${escapeHtml(f.description || 'Bookmarked quiz.')}</div>
+
+                <div class="comm-card-meta">
+                  <span>Category: <strong style="color: #fff;">${escapeHtml(f.category)}</strong></span>
+                  <span>By: <strong style="color: #a78bfa;">${escapeHtml(f.creator_display_name)}</strong></span>
+                </div>
+
+                <div style="display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.5rem;">
+                  <button class="btn btn-primary" style="flex: 1;" type="button" data-action="play-community-quiz" data-quiz-id="${escapeHtml(f.quiz_id)}">
+                    ▶ Play Now
+                  </button>
+                  <button class="btn btn-secondary" type="button" data-action="remove-favorite" data-quiz-id="${escapeHtml(f.quiz_id)}">
+                    ✕ Remove
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="comm-card" style="text-align: center; padding: 2.5rem 1rem;">
+            <h2>⭐ No saved quizzes</h2>
+            <p class="comm-card-desc">Click 'Save' on any quiz in the Discover or Search views to bookmark it here.</p>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function renderCommCollections() {
+    const cols = state.communityCollections || [];
+    const active = state.communityActiveCollection;
+
+    return `
+      <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+          <div>
+            <h2 style="font-size: 1.3rem; color: #fff; margin: 0;">📚 Curated Playlists &amp; Subject Collections</h2>
+            <div style="font-size: 0.82rem; color: #8588ae;">Structured multi-quiz pathways for exam preparation and subject mastery.</div>
+          </div>
+          <button class="btn btn-primary" type="button" data-action="toggle-new-collection-form">+ Create Collection</button>
+        </div>
+
+        <div id="comm-new-collection-box" class="comm-card" style="display: ${state.communityCreatingCollection ? 'block' : 'none'};">
+          <h3>📚 Create New Quiz Playlist</h3>
+          <form id="comm-create-col-form" style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Title:</label>
+              <input id="comm-collection-title" name="comm-col-title-inp" class="form-control" type="text" placeholder="e.g. Java Masterclass Playlist" style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;" />
+            </div>
+            <div>
+              <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Description:</label>
+              <textarea id="comm-collection-desc" name="comm-col-desc-inp" class="form-control" rows="2" placeholder="Describe the focus and goals of this playlist..." style="width: 100%; box-sizing: border-box; background: #111326; border: 1px solid #2b2e54; color: #fff; padding: 0.5rem; border-radius: 6px;"></textarea>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-primary" type="button" data-action="submit-create-collection">Create</button>
+              <button class="btn btn-secondary" type="button" data-action="toggle-new-collection-form">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        ${active ? `
+          <div class="comm-card" style="border-color: #7c5cff;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h3 style="margin: 0; color: #fff;">${escapeHtml(active.title)}</h3>
+                <div style="font-size: 0.82rem; color: #8588ae;">By ${escapeHtml(active.owner_name)} &bull; ${active.item_count || 0} quizzes</div>
+              </div>
+              <button class="btn btn-secondary" type="button" data-action="close-active-collection">✕ Close</button>
+            </div>
+
+            <p class="comm-card-desc" style="margin-top: 0.5rem;">${escapeHtml(active.description || 'Curriculum playlist.')}</p>
+
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+              ${(active.items || []).map((it, idx) => `
+                <div class="collection-item-row">
+                  <div>
+                    <span style="font-weight: 700; color: #7c5cff; margin-right: 0.5rem;">${idx + 1}.</span>
+                    <strong style="color: #fff;">${escapeHtml(it.title)}</strong>
+                    <span style="font-size: 0.76rem; color: #8588ae; margin-left: 0.5rem;">(${escapeHtml(it.category)})</span>
+                  </div>
+                  <div style="display: flex; gap: 0.4rem;">
+                    <button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.78rem;" type="button" data-action="play-community-quiz" data-quiz-id="${escapeHtml(it.quiz_id)}">
+                      Play
+                    </button>
+                    ${active.owner_id === state.profile?.id ? `
+                      <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.78rem; color: #f87171;" type="button" data-action="remove-quiz-from-col" data-col-id="${escapeHtml(active.id)}" data-quiz-id="${escapeHtml(it.quiz_id)}">
+                        Remove
+                      </button>
+                    ` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+
+        ${cols.length > 0 ? `
+          <div class="comm-grid">
+            ${cols.map(c => `
+              <div class="comm-card">
+                <div class="comm-card-title">${escapeHtml(c.title)}</div>
+                <div class="comm-card-desc">${escapeHtml(c.description || 'Curated community collection.')}</div>
+                <div class="comm-card-meta">
+                  <span>Author: <strong style="color: #a78bfa;">${escapeHtml(c.owner_name)}</strong></span>
+                  <span><strong>${c.item_count || 0}</strong> quizzes</span>
+                </div>
+                <div style="margin-top: auto; padding-top: 0.5rem;">
+                  <button class="btn btn-primary" style="width: 100%;" type="button" data-action="view-collection" data-col-id="${escapeHtml(c.id)}">
+                    Open Playlist (${c.item_count || 0} Quizzes)
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="comm-card"><p class="comm-card-desc">No playlists found. Create the first one above!</p></div>
+        `}
+      </div>
+    `;
+  }
+
+  function renderCommModeration() {
+    const reports = state.communityModerationReports || [];
+    const audit = state.communityModerationAudit || [];
+
+    return `
+      <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <div>
+          <h2 style="font-size: 1.3rem; color: #fff; margin: 0 0 0.5rem 0;">🛡️ Community Moderation Queue</h2>
+          <div style="font-size: 0.82rem; color: #8588ae;">Manage reported quizzes, reviews, and community safety enforcement.</div>
+        </div>
+
+        <div class="comm-card" style="padding: 0; overflow-x: auto;">
+          <table class="mod-table">
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Target ID</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${reports.length > 0 ? reports.map(r => `
+                <tr>
+                  <td><span class="comm-badge comm-badge-plays">${escapeHtml(r.target_type)}</span></td>
+                  <td><code>${escapeHtml(r.target_id.slice(0, 12))}…</code></td>
+                  <td><strong style="color: #f87171;">${escapeHtml(r.reason)}</strong></td>
+                  <td>
+                    <span class="comm-badge ${r.status === 'open' ? 'comm-badge-pending' : 'comm-badge-pub'}">
+                      ${escapeHtml(r.status)}
+                    </span>
+                  </td>
+                  <td>
+                    <div style="display: flex; gap: 0.35rem;">
+                      ${r.target_type === 'quiz' ? `
+                        <button class="btn btn-secondary" style="font-size: 0.74rem; padding: 0.25rem 0.5rem; color: #f87171;" type="button" data-action="mod-resolve" data-report-id="${escapeHtml(r.id)}" data-mod-action="suspend_quiz">
+                          Suspend
+                        </button>
+                        <button class="btn btn-secondary" style="font-size: 0.74rem; padding: 0.25rem 0.5rem; color: #4ade80;" type="button" data-action="mod-resolve" data-report-id="${escapeHtml(r.id)}" data-mod-action="restore_quiz">
+                          Restore
+                        </button>
+                      ` : ''}
+                      ${r.target_type === 'review' ? `
+                        <button class="btn btn-secondary" style="font-size: 0.74rem; padding: 0.25rem 0.5rem; color: #f87171;" type="button" data-action="mod-resolve" data-report-id="${escapeHtml(r.id)}" data-mod-action="hide_review">
+                          Hide
+                        </button>
+                      ` : ''}
+                      <button class="btn btn-secondary" style="font-size: 0.74rem; padding: 0.25rem 0.5rem;" type="button" data-action="mod-resolve" data-report-id="${escapeHtml(r.id)}" data-mod-action="dismiss_report">
+                        Dismiss
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('') : `
+                <tr>
+                  <td colspan="5" style="text-align: center; padding: 2rem; color: #8588ae;">
+                    Queue clean! No open moderation reports.
+                  </td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <h3 style="font-size: 1.15rem; color: #fff; margin-bottom: 0.5rem;">📜 Moderation Audit Trail</h3>
+          <div class="comm-card" style="padding: 0; overflow-x: auto;">
+            <table class="mod-table">
+              <thead>
+                <tr>
+                  <th>Moderator</th>
+                  <th>Action</th>
+                  <th>Target Type</th>
+                  <th>Target ID</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${audit.length > 0 ? audit.map(a => `
+                  <tr>
+                    <td><strong>${escapeHtml(a.moderator_name)}</strong></td>
+                    <td><code>${escapeHtml(a.action_type)}</code></td>
+                    <td>${escapeHtml(a.target_type)}</td>
+                    <td>${escapeHtml(a.target_id.slice(0, 12))}…</td>
+                    <td style="color: #8588ae;">${timeAgo(a.created_at)}</td>
+                  </tr>
+                `).join('') : `
+                  <tr>
+                    <td colspan="5" style="text-align: center; padding: 1.5rem; color: #8588ae;">No recent audit logs.</td>
+                  </tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCommModals() {
+    let html = '';
+    // Review Modal
+    if (state.communityActiveQuiz) {
+      const qid = state.communityActiveQuiz.id;
+      const qtitle = state.communityActiveQuiz.title;
+      const reviews = state.communityActiveReviews || [];
+      html += `
+        <div id="comm-reviews-modal" class="notif-modal-backdrop" style="display: flex;">
+          <div class="comm-card" style="width: 100%; max-width: 580px; max-height: 85vh; overflow-y: auto; background: #13152a; border-color: #3f447a;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 style="margin: 0; color: #fff;">Ratings &amp; Reviews: ${escapeHtml(qtitle)}</h3>
+              <button class="btn btn-secondary" type="button" data-action="close-quiz-reviews">✕</button>
+            </div>
+
+            <div style="background: #191b38; padding: 1rem; border-radius: 10px; margin: 0.75rem 0;">
+              <div style="font-weight: 700; font-size: 0.88rem; color: #fff; margin-bottom: 0.5rem;">Submit Verified Rating:</div>
+              <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;">
+                <label style="font-size: 0.82rem;">Stars:</label>
+                <select id="review-star-rating" style="background: #0e1022; border: 1px solid #2d3058; color: #facc15; padding: 0.35rem; border-radius: 6px;">
+                  <option value="5" selected>★★★★★ (5 Stars)</option>
+                  <option value="4">★★★★☆ (4 Stars)</option>
+                  <option value="3">★★★☆☆ (3 Stars)</option>
+                  <option value="2">★★☆☆☆ (2 Stars)</option>
+                  <option value="1">★☆☆☆☆ (1 Star)</option>
+                </select>
+              </div>
+              <textarea id="comm-review-text" name="review-text-input" rows="2" placeholder="Write feedback for the quiz creator (optional)..." style="width: 100%; box-sizing: border-box; background: #0e1022; border: 1px solid #2d3058; color: #fff; padding: 0.5rem; border-radius: 6px;"></textarea>
+              <button class="btn btn-primary" style="margin-top: 0.5rem;" type="button" data-action="submit-quiz-review" data-quiz-id="${escapeHtml(qid)}">
+                Submit Review
+              </button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+              <div style="font-size: 0.84rem; color: #8588ae; font-weight: 700;">Verified Reviews (${reviews.length}):</div>
+              ${reviews.length > 0 ? reviews.map(r => `
+                <div class="review-item comm-review-card">
+                  <div class="review-header">
+                    <div>
+                      <strong style="color: #fff;">${escapeHtml(r.reviewer_name)}</strong>
+                      <span style="color: #facc15; margin-left: 0.5rem;">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>
+                    </div>
+                    <span style="font-size: 0.75rem; color: #8588ae;">${timeAgo(r.created_at)}</span>
+                  </div>
+                  ${r.review_text ? `<div class="comm-review-body" style="font-size: 0.84rem; color: #b2b5dc; line-height: 1.4;">${escapeHtml(r.review_text)}</div>` : ''}
+
+                  ${r.creator_response ? `
+                    <div class="review-creator-reply">
+                      <strong style="color: #a78bfa;">Creator Response:</strong> ${escapeHtml(r.creator_response)}
+                    </div>
+                  ` : ''}
+
+                  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: #8588ae; margin-top: 0.25rem;">
+                    <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.74rem;" type="button" data-action="mark-review-helpful" data-review-id="${escapeHtml(r.id)}">
+                      👍 Helpful (${r.helpful_count || 0})
+                    </button>
+                    ${r.player_id === state.profile?.id ? `
+                      <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.74rem; color: #f87171;" type="button" data-action="delete-own-review" data-review-id="${escapeHtml(r.id)}">
+                        Delete
+                      </button>
+                    ` : ''}
+                  </div>
+                </div>
+              `).join('') : '<div style="color: #8588ae; font-size: 0.82rem;">No written reviews yet. Be the first!</div>'}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Report Modal
+    if (state.communityActiveReportTarget) {
+      const tgt = state.communityActiveReportTarget;
+      html += `
+        <div id="comm-report-modal" class="notif-modal-backdrop" style="display: flex;">
+          <div class="comm-card" style="width: 100%; max-width: 460px; background: #13152a; border-color: #63242c;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 style="margin: 0; color: #f87171;">🚩 Report Content</h3>
+              <button class="btn btn-secondary" type="button" data-action="close-comm-modal">✕</button>
+            </div>
+            <p style="font-size: 0.82rem; color: #8588ae; margin: 0.4rem 0;">
+              Help keep QuizVerse Live safe. Reports are audited privately by human moderators.
+            </p>
+
+            <form id="comm-report-form" style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+              <div>
+                <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Reason:</label>
+                <select id="report-reason-select" style="width: 100%; box-sizing: border-box; background: #0e1022; border: 1px solid #2d3058; color: #fff; padding: 0.5rem; border-radius: 6px;">
+                  <option value="inappropriate">Inappropriate / Offensive Content</option>
+                  <option value="incorrect_answer">Incorrect or Misleading Question</option>
+                  <option value="spam">Spam / Advertising</option>
+                  <option value="plagiarism">Plagiarism / Copied Quiz</option>
+                  <option value="harassment">Harassment</option>
+                  <option value="other">Other Violation</option>
+                </select>
+              </div>
+
+              <div>
+                <label style="font-size: 0.8rem; display: block; margin-bottom: 0.2rem;">Details:</label>
+                <textarea id="comm-report-details" name="report-details-text" rows="3" placeholder="Provide context to assist moderator review..." style="width: 100%; box-sizing: border-box; background: #0e1022; border: 1px solid #2d3058; color: #fff; padding: 0.5rem; border-radius: 6px;"></textarea>
+              </div>
+
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-primary" style="background: #dc2626; border-color: #dc2626;" type="button" data-action="submit-community-report" data-target-type="${escapeHtml(tgt.target_type)}" data-target-id="${escapeHtml(tgt.target_id)}">
+                  Submit Report
+                </button>
+                <button class="btn btn-secondary" type="button" data-action="close-comm-modal">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    // Analytics Modal
+    if (state.communityAnalyticsModal) {
+      const a = state.communityAnalyticsModal;
+      html += `
+        <div class="notif-modal-backdrop" style="display: flex;">
+          <div class="comm-card" style="width: 100%; max-width: 520px; background: #13152a; border-color: #3f447a;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 style="margin: 0; color: #fff;">📊 Creator Analytics</h3>
+              <button class="btn btn-secondary" type="button" data-action="close-comm-modal">✕</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin: 1rem 0;">
+              <div style="background: #111326; padding: 0.75rem; border-radius: 8px;">
+                <div style="font-size: 0.76rem; color: #8588ae;">Total Plays</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #4ade80;">${a.total_plays || 0}</div>
+              </div>
+              <div style="background: #111326; padding: 0.75rem; border-radius: 8px;">
+                <div style="font-size: 0.76rem; color: #8588ae;">Unique Players</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #fff;">${a.unique_players || 0}</div>
+              </div>
+              <div style="background: #111326; padding: 0.75rem; border-radius: 8px;">
+                <div style="font-size: 0.76rem; color: #8588ae;">Average Rating</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #facc15;">★ ${a.average_rating || 0}</div>
+              </div>
+              <div style="background: #111326; padding: 0.75rem; border-radius: 8px;">
+                <div style="font-size: 0.76rem; color: #8588ae;">Followers</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #a78bfa;">${a.follower_count || 0}</div>
+              </div>
+            </div>
+
+            <h4 style="color: #fff; font-size: 0.9rem; margin-bottom: 0.4rem;">Top Performing Quizzes</h4>
+            <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+              ${(a.popular_quizzes || []).map(pq => `
+                <div style="display: flex; justify-content: space-between; font-size: 0.82rem; background: #111326; padding: 0.4rem 0.6rem; border-radius: 6px;">
+                  <strong style="color: #fff;">${escapeHtml(pq.title)}</strong>
+                  <span style="color: #a78bfa;">${pq.total_plays || 0} plays &bull; ★ ${pq.average_rating || 0}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    return html;
+  }
+
+  function communityScreen() {
+    const tab = state.communityTab || 'discover';
+
+    let bodyHtml = '';
+    if (state.communityLoading && !state.communityOverview && !state.communitySearchResults && !state.communityCreators.length) {
+      bodyHtml = '<div class="comm-card" style="text-align: center; padding: 2rem;"><p>Loading Community Hub…</p></div>';
+    } else {
+      switch (tab) {
+        case 'explore': bodyHtml = renderCommExplore(); break;
+        case 'creators': bodyHtml = renderCommCreators(); break;
+        case 'studio': bodyHtml = renderCommStudio(); break;
+        case 'favorites': bodyHtml = renderCommFavorites(); break;
+        case 'collections': bodyHtml = renderCommCollections(); break;
+        case 'moderation': bodyHtml = renderCommModeration(); break;
+        default: bodyHtml = renderCommDiscover(); break;
+      }
+    }
+
+    app.innerHTML = `
+      <div class="comm-shell">
+        <div class="comm-header">
+          <div>
+            <h1>🌍 Creator &amp; Community Ecosystem</h1>
+            <p style="margin: 0.25rem 0 0; font-size: 0.88rem; color: #9497bc;">
+              Discover community quizzes, follow top educators, create playlists, and build your creator legacy.
+            </p>
+          </div>
+          <button class="btn btn-secondary" type="button" data-action="refresh-community">↻ Refresh</button>
+        </div>
+
+        <nav class="comm-nav" aria-label="Community Tabs">
+          <button class="comm-tab-btn ${tab === 'discover' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="discover">🌟 Discover</button>
+          <button class="comm-tab-btn ${tab === 'explore' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="explore">🔍 Search &amp; Explore</button>
+          <button class="comm-tab-btn ${tab === 'creators' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="creators">👤 Creators</button>
+          <button class="comm-tab-btn ${tab === 'studio' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="studio">🛠️ Creator Studio</button>
+          <button class="comm-tab-btn ${tab === 'favorites' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="favorites">⭐ Saved Quizzes</button>
+          <button class="comm-tab-btn ${tab === 'collections' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="collections">📚 Collections &amp; Playlists</button>
+          ${state.communityIsModerator ? `<button class="comm-tab-btn ${tab === 'moderation' ? 'active' : ''}" type="button" data-action="comm-tab" data-tab="moderation">🛡️ Moderation</button>` : ''}
+        </nav>
+
+        ${state.communityError ? `<p class="library-message" role="status" style="color: #f87171; border-color: rgba(239, 68, 68, 0.4);">${escapeHtml(state.communityError)}</p>` : ''}
+
+        <div class="comm-tab-content">
+          ${bodyHtml}
+        </div>
+
+        ${renderCommModals()}
+      </div>
+    `;
+  }
+
   function intelligenceScreen() {
     const tab = state.intelligenceTab || 'overview';
 
@@ -4221,6 +5121,10 @@
     if (state.tick) clearInterval(state.tick);
     if (state.view === 'intelligence') {
       intelligenceScreen();
+      return;
+    }
+    if (state.view === 'community') {
+      communityScreen();
       return;
     }
     if (state.view === 'social') {
@@ -5493,6 +6397,388 @@
       const reaction = target.dataset.reaction;
       send('room_chat_reaction', { message_id: msgId, reaction });
     }
+    else if (action === 'comm-tab') {
+      state.communityTab = target.dataset.tab;
+      void refreshCommunity();
+    }
+    else if (action === 'refresh-community') {
+      void refreshCommunity();
+    }
+    else if (action === 'exec-comm-search') {
+      const searchInput = document.querySelector('#comm-search-input');
+      const diffSelect = document.querySelector('#comm-filter-difficulty');
+      const sortSelect = document.querySelector('#comm-sort-by');
+      state.communitySearchQuery = searchInput ? searchInput.value.trim() : '';
+      state.communityFilterDifficulty = diffSelect ? diffSelect.value : '';
+      state.communitySortBy = sortSelect ? sortSelect.value : 'popular';
+      void refreshCommunity();
+    }
+    else if (action === 'toggle-follow-creator') {
+      const creatorId = target.dataset.id;
+      if (!creatorId) return;
+      const isFollowing = target.dataset.following === 'true';
+      try {
+        if (isFollowing) {
+          await playerApi(`/api/community/creators/follow/${creatorId}`, { method: 'DELETE' });
+          notify('Unfollowed creator', 'info');
+        } else {
+          await playerApi(`/api/community/creators/follow/${creatorId}`, { method: 'POST' });
+          notify('Following creator!', 'success');
+        }
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Follow action failed', 'error');
+      }
+    }
+    else if (action === 'toggle-edit-creator-profile') {
+      state.communityEditingProfile = !state.communityEditingProfile;
+      render();
+    }
+    else if (action === 'save-creator-profile') {
+      const bio = document.querySelector('#comm-profile-bio')?.value.trim() || document.querySelector('#comm-creator-bio-inp')?.value.trim() || '';
+      const specialty = document.querySelector('#comm-profile-specialty')?.value.trim() || document.querySelector('#comm-creator-specs-inp')?.value.trim() || '';
+      const specializations = specialty ? specialty.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const displayName = document.querySelector('#comm-creator-name-inp')?.value.trim() || undefined;
+      try {
+        const { response, data } = await playerApi('/api/community/creators/me', {
+          method: 'PUT',
+          body: JSON.stringify({ bio, display_name: displayName, specializations })
+        });
+        if (!response.ok) throw new Error(data?.message || 'Failed to update creator profile');
+        notify('Creator profile updated', 'success');
+        state.communityEditingProfile = false;
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Failed to update creator profile', 'error');
+      }
+    }
+    else if (action === 'toggle-quick-author-form') {
+      state.communityAuthoringQuiz = !state.communityAuthoringQuiz;
+      render();
+    }
+    else if (action === 'studio-quick-create') {
+      const title = document.querySelector('#comm-new-quiz-title')?.value.trim() || document.querySelector('#studio-q-title')?.value.trim();
+      const desc = document.querySelector('#comm-new-quiz-desc')?.value.trim();
+      const cat = document.querySelector('#comm-new-quiz-category')?.value.trim() || document.querySelector('#studio-q-category')?.value.trim() || 'General';
+      const diff = document.querySelector('#comm-new-quiz-difficulty')?.value || document.querySelector('#studio-q-diff')?.value || 'medium';
+      const q1 = document.querySelector('#comm-new-q1-text')?.value.trim() || document.querySelector('#studio-q1-prompt')?.value.trim();
+      const a1 = document.querySelector('#comm-new-q1-a1')?.value.trim() || document.querySelector('#studio-q1-o0')?.value.trim();
+      const a2 = document.querySelector('#comm-new-q1-a2')?.value.trim() || document.querySelector('#studio-q1-o1')?.value.trim();
+      const a3 = document.querySelector('#comm-new-q1-a3')?.value.trim() || document.querySelector('#studio-q1-o2')?.value.trim();
+      const a4 = document.querySelector('#comm-new-q1-a4')?.value.trim() || document.querySelector('#studio-q1-o3')?.value.trim();
+      if (!title || !q1 || !a1 || !a2) {
+        notify('Please provide at least a title and 1 question with 2 options', 'error');
+        return;
+      }
+      try {
+        let cap = sessionStorage.getItem('qv-owner-capability');
+        if (!cap) {
+          const capRes = await fetch('/api/quiz-owners', { method: 'POST' });
+          if (capRes.ok) {
+            const capData = await capRes.json();
+            cap = capData.capability;
+            sessionStorage.setItem('qv-owner-capability', cap);
+          }
+        }
+        const createRes = await fetch('/api/quizzes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(cap ? { 'Authorization': `Bearer ${cap}` } : {})
+          },
+          body: JSON.stringify({
+            title,
+            description: desc || 'Community authored quiz',
+            category: cat,
+            difficulty: diff,
+            visibility: 'public',
+            default_time_limit_seconds: 15,
+            questions: [
+              {
+                prompt: q1,
+                options: [a1, a2, a3 || 'Option 3', a4 || 'Option 4'],
+                correct_option_index: 0,
+                explanation: 'Created via Community Studio'
+              },
+              {
+                prompt: 'What is the deepest known oceanic depression on Earth?',
+                options: ['Challenger Deep', 'Java Trench', 'Puerto Rico Trench', 'Molley Deep'],
+                correct_option_index: 0,
+                explanation: 'Challenger Deep is located in the southern Mariana Trench.'
+              }
+            ]
+          })
+        });
+        const createData = await createRes.json();
+        if (!createRes.ok || !createData.id) {
+          throw new Error(createData?.detail || createData?.message || 'Quiz creation failed');
+        }
+        const pubRes = await playerApi(`/api/community/quizzes/${createData.id}/publish`, {
+          method: 'POST',
+          body: JSON.stringify({ visibility: 'public' })
+        });
+        if (!pubRes.response.ok) {
+          throw new Error(pubRes.data?.detail || pubRes.data?.message || 'Publishing failed');
+        }
+        notify('Quiz created and published to Community!', 'success');
+        state.communityAuthoringQuiz = false;
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Quiz creation/publishing failed', 'error');
+      }
+    }
+    else if (action === 'studio-publish-quiz') {
+      const id = target.dataset.quizId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/quizzes/${id}/publish`, {
+          method: 'POST',
+          body: JSON.stringify({ visibility: 'public' })
+        });
+        notify('Quiz published!', 'success');
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Publishing failed', 'error');
+      }
+    }
+    else if (action === 'studio-unpublish-quiz') {
+      const id = target.dataset.quizId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/quizzes/${id}/unpublish`, { method: 'POST' });
+        notify('Quiz unpublished to draft', 'info');
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Unpublish failed', 'error');
+      }
+    }
+    else if (action === 'open-creator-analytics') {
+      const id = target.dataset.creatorId || target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/community/creators/${id}/analytics`);
+        if (response.ok) {
+          state.communityAnalyticsModal = data;
+          render();
+        }
+      } catch (err) {
+        notify(err.message || 'Could not load analytics', 'error');
+      }
+    }
+    else if (action === 'toggle-favorite') {
+      const id = target.dataset.quizId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/favorites/${id}`, { method: 'POST' });
+        notify('Saved to favorites', 'success');
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Failed to update favorites', 'error');
+      }
+    }
+    else if (action === 'remove-favorite') {
+      const id = target.dataset.quizId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/favorites/${id}`, { method: 'DELETE' });
+        notify('Removed from favorites', 'info');
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Failed to remove favorite', 'error');
+      }
+    }
+    else if (action === 'open-quiz-reviews') {
+      const id = target.dataset.quizId || target.dataset.id;
+      const title = target.dataset.quizTitle || target.dataset.title || 'Community Quiz';
+      try {
+        const { response, data } = await playerApi(`/api/community/quizzes/${id}/reviews`);
+        state.communityActiveQuiz = { id, title };
+        state.communityActiveReviews = data?.items || [];
+        render();
+      } catch (err) {
+        notify(err.message || 'Failed to load reviews', 'error');
+      }
+    }
+    else if (action === 'close-quiz-reviews') {
+      state.communityActiveQuiz = null;
+      state.communityActiveReviews = null;
+      render();
+    }
+    else if (action === 'submit-quiz-review') {
+      const qid = target.dataset.quizId || target.dataset.id || state.communityActiveQuiz?.id;
+      const ratingVal = parseInt(document.querySelector('#comm-review-rating')?.value || document.querySelector('#review-star-rating')?.value || '5', 10);
+      const reviewText = document.querySelector('#comm-review-text')?.value.trim() || document.querySelector('#review-text-input')?.value.trim() || '';
+      try {
+        const { response, data } = await playerApi(`/api/community/quizzes/${qid}/reviews`, {
+          method: 'POST',
+          body: JSON.stringify({ rating: ratingVal, review_text: reviewText })
+        });
+        if (!response.ok) {
+          throw new Error(data?.detail || data?.message || 'Could not submit review (must play quiz first)');
+        }
+        notify('Review submitted successfully!', 'success');
+        const res = await playerApi(`/api/community/quizzes/${qid}/reviews`);
+        state.communityActiveReviews = res.data?.items || [];
+        render();
+      } catch (err) {
+        notify(err.message || 'Could not submit review (must play quiz first)', 'error');
+      }
+    }
+    else if (action === 'mark-review-helpful') {
+      const rid = target.dataset.reviewId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/reviews/${rid}/helpful`, { method: 'POST' });
+        notify('Marked as helpful', 'success');
+        if (state.communityActiveQuiz) {
+          const res = await playerApi(`/api/community/quizzes/${state.communityActiveQuiz.id}/reviews`);
+          state.communityActiveReviews = res.data?.items || [];
+          render();
+        }
+      } catch (err) {
+        notify(err.message || 'Vote failed', 'error');
+      }
+    }
+    else if (action === 'delete-own-review') {
+      const rid = target.dataset.reviewId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/reviews/${rid}`, { method: 'DELETE' });
+        notify('Review deleted', 'info');
+        if (state.communityActiveQuiz) {
+          const res = await playerApi(`/api/community/quizzes/${state.communityActiveQuiz.id}/reviews`);
+          state.communityActiveReviews = res.data?.items || [];
+          render();
+        }
+      } catch (err) {
+        notify(err.message || 'Delete failed', 'error');
+      }
+    }
+    else if (action === 'open-report-modal') {
+      state.communityActiveReportTarget = {
+        target_type: target.dataset.targetType,
+        target_id: target.dataset.targetId
+      };
+      render();
+    }
+    else if (action === 'close-report-modal') {
+      state.communityActiveReportTarget = null;
+      render();
+    }
+    else if (action === 'submit-community-report') {
+      if (!state.communityActiveReportTarget) return;
+      const reason = document.querySelector('#report-reason-select')?.value || document.querySelector('#comm-report-reason')?.value || 'inappropriate';
+      const details = document.querySelector('#comm-report-details')?.value.trim() || document.querySelector('#report-details-text')?.value.trim() || '';
+      try {
+        const { response, data } = await playerApi('/api/community/reports', {
+          method: 'POST',
+          body: JSON.stringify({
+            target_type: state.communityActiveReportTarget.target_type,
+            target_id: state.communityActiveReportTarget.target_id,
+            reason,
+            description: details
+          })
+        });
+        if (!response.ok) throw new Error(data?.detail || data?.message || 'Report submission failed');
+        notify('Report submitted to moderation queue', 'info');
+        state.communityActiveReportTarget = null;
+        render();
+      } catch (err) {
+        notify(err.message || 'Report failed', 'error');
+      }
+    }
+    else if (action === 'mod-resolve') {
+      const repId = target.dataset.id;
+      const actionType = target.dataset.modAction;
+      const notes = prompt(`Moderator notes for action "${actionType}":`) || 'Processed via Community Moderator Dashboard';
+      try {
+        await playerApi(`/api/community/moderation/reports/${repId}/resolve`, {
+          method: 'POST',
+          body: JSON.stringify({ action: actionType, notes })
+        });
+        notify(`Report resolved with action: ${actionType}`, 'success');
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Moderation action failed', 'error');
+      }
+    }
+    else if (action === 'toggle-new-collection-form') {
+      state.communityCreatingCollection = !state.communityCreatingCollection;
+      render();
+    }
+    else if (action === 'submit-create-collection') {
+      const title = document.querySelector('#comm-collection-title')?.value.trim() || document.querySelector('#comm-col-title-inp')?.value.trim();
+      const desc = document.querySelector('#comm-collection-desc')?.value.trim() || document.querySelector('#comm-col-desc-inp')?.value.trim();
+      const vis = document.querySelector('#comm-collection-vis')?.value || 'public';
+      if (!title) {
+        notify('Collection title required', 'error');
+        return;
+      }
+      try {
+        const { response, data } = await playerApi('/api/community/collections', {
+          method: 'POST',
+          body: JSON.stringify({ title, description: desc, visibility: vis })
+        });
+        if (!response.ok) throw new Error(data?.detail || data?.message || 'Failed to create collection');
+        notify('Collection created!', 'success');
+        state.communityCreatingCollection = false;
+        void refreshCommunity();
+      } catch (err) {
+        notify(err.message || 'Failed to create collection', 'error');
+      }
+    }
+    else if (action === 'view-collection') {
+      const id = target.dataset.colId || target.dataset.id;
+      try {
+        const { response, data } = await playerApi(`/api/community/collections/${id}`);
+        if (response.ok) {
+          state.communityActiveCollection = data;
+          render();
+        }
+      } catch (err) {
+        notify(err.message || 'Could not load collection', 'error');
+      }
+    }
+    else if (action === 'close-active-collection') {
+      state.communityActiveCollection = null;
+      render();
+    }
+    else if (action === 'remove-quiz-from-col') {
+      const cid = target.dataset.colId || target.dataset.collectionId;
+      const qid = target.dataset.quizId;
+      try {
+        await playerApi(`/api/community/collections/${cid}/quizzes/${qid}`, { method: 'DELETE' });
+        notify('Quiz removed from collection', 'info');
+        const { response, data } = await playerApi(`/api/community/collections/${cid}`);
+        if (response.ok) state.communityActiveCollection = data;
+        render();
+      } catch (err) {
+        notify(err.message || 'Failed to remove quiz', 'error');
+      }
+    }
+    else if (action === 'share-community-quiz') {
+      const id = target.dataset.quizId || target.dataset.id;
+      const url = `${window.location.origin}/#community/quiz/${id}`;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url);
+      }
+      notify('Share URL copied to clipboard!', 'success');
+    }
+    else if (action === 'play-community-quiz') {
+      const id = target.dataset.quizId || target.dataset.id;
+      try {
+        await playerApi(`/api/community/quizzes/${id}/play`, { method: 'POST' });
+        state.quizId = id;
+        state.gameMode = 'solo';
+        state.view = 'play';
+        setActiveNavigation();
+        render();
+        notify('Starting Community Quiz...', 'info');
+        send('create_room', { mode: 'solo', quiz_id: id });
+      } catch (err) {
+        notify(err.message || 'Could not launch quiz', 'error');
+      }
+    }
+    else if (action === 'close-comm-modal') {
+      state.communityActiveAnalytics = null;
+      state.communityActiveQuiz = null;
+      state.communityActiveReportTarget = null;
+      state.communityActiveCollection = null;
+      render();
+    }
   });
   app.addEventListener('keydown', event => {
     if (event.key === 'Enter' && event.target.id === 'room-code') document.querySelector('[data-action="confirm-join"]')?.click();
@@ -5730,6 +7016,11 @@
         state.view = 'profile';
         setActiveNavigation();
         void refreshProfile();
+      } else if (targetType === 'quiz' || targetType === 'creator' || targetType === 'review' || targetType === 'collection') {
+        state.view = 'community';
+        setActiveNavigation();
+        render();
+        void refreshCommunity();
       }
       return;
     }
@@ -5757,6 +7048,7 @@
     else if (state.view === 'leagues') void refreshLeagues();
     else if (state.view === 'social') void refreshSocial();
     else if (state.view === 'intelligence') void refreshIntelligence();
+    else if (state.view === 'community') void refreshCommunity();
     else render();
   });
   setActiveNavigation();

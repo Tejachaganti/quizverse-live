@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -1323,6 +1324,307 @@ class QuizRecommendationRecord(Base):
     score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+# =============================================================================
+# STAGE 11: CREATOR & COMMUNITY ECOSYSTEM MODELS
+# =============================================================================
+
+
+class CreatorProfile(Base):
+    """Public creator identity and statistics extending player profile."""
+
+    __tablename__ = "creator_profiles"
+    __table_args__ = (
+        Index("ix_creator_visibility", "creator_visibility"),
+        CheckConstraint("creator_visibility IN ('public', 'private')", name="ck_creator_visibility"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), primary_key=True)
+    creator_display_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    creator_bio: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    creator_avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    creator_banner_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    creator_specializations: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    creator_visibility: Mapped[str] = mapped_column(String(16), default="public", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
+    published_quiz_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_plays: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    follower_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    following_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[id])
+
+
+class QuizPublication(Base):
+    """Publication state, community discovery metadata, and review aggregates for a quiz."""
+
+    __tablename__ = "quiz_publications"
+    __table_args__ = (
+        Index("ix_quiz_pub_status_vis", "status", "visibility"),
+        Index("ix_quiz_pub_creator", "creator_id"),
+        Index("ix_quiz_pub_rating", "average_rating"),
+        Index("ix_quiz_pub_plays", "total_plays"),
+        Index("ix_quiz_pub_published_at", "published_at"),
+        CheckConstraint("visibility IN ('private', 'unlisted', 'public')", name="ck_pub_visibility"),
+        CheckConstraint(
+            "status IN ('draft', 'pending_review', 'published', 'rejected', 'archived', 'suspended')",
+            name="ck_pub_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    quiz_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("quizzes.id", ondelete="CASCADE"), unique=True, nullable=False, index=True
+    )
+    creator_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    visibility: Mapped[str] = mapped_column(String(16), default="public", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="published", nullable=False)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suspension_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    share_slug: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_plays: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rating_sum: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    average_rating: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    validation_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    quiz: Mapped[Quiz] = relationship()
+    creator: Mapped[PlayerProfile] = relationship(foreign_keys=[creator_id])
+
+
+class QuizPlay(Base):
+    """Play engagement record for eligibility, analytics, and play counts."""
+
+    __tablename__ = "quiz_plays"
+    __table_args__ = (
+        Index("ix_quiz_play_player_quiz", "player_id", "quiz_id"),
+        Index("ix_quiz_play_completed_at", "completed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    quiz_id: Mapped[str] = mapped_column(String(64), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False, index=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    quiz: Mapped[Quiz] = relationship()
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
+
+
+class CreatorFollow(Base):
+    """Persistent follower relationship between players and creators."""
+
+    __tablename__ = "creator_follows"
+    __table_args__ = (
+        UniqueConstraint("follower_id", "creator_id", name="uq_creator_follower"),
+        Index("ix_creator_follow_creator", "creator_id"),
+        Index("ix_creator_follow_follower", "follower_id"),
+        CheckConstraint("follower_id <> creator_id", name="ck_cannot_follow_self"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    follower_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    creator_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    follower: Mapped[PlayerProfile] = relationship(foreign_keys=[follower_id])
+    creator: Mapped[PlayerProfile] = relationship(foreign_keys=[creator_id])
+
+
+class QuizReview(Base):
+    """Player rating and written review on a community quiz."""
+
+    __tablename__ = "quiz_reviews"
+    __table_args__ = (
+        UniqueConstraint("quiz_id", "player_id", name="uq_quiz_review_player"),
+        Index("ix_quiz_reviews_quiz", "quiz_id"),
+        Index("ix_quiz_reviews_player", "player_id"),
+        Index("ix_quiz_reviews_created", "created_at"),
+        CheckConstraint("rating BETWEEN 1 AND 5", name="ck_quiz_review_rating"),
+        CheckConstraint("review_text IS NULL OR length(review_text) <= 1000", name="ck_quiz_review_length"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    quiz_id: Mapped[str] = mapped_column(String(64), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_text: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    creator_response: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    creator_responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    helpful_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_false(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    quiz: Mapped[Quiz] = relationship()
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
+
+
+class QuizReviewHelpful(Base):
+    """Helpful reaction marking on a quiz review."""
+
+    __tablename__ = "quiz_review_helpful"
+    __table_args__ = (
+        UniqueConstraint("review_id", "player_id", name="uq_review_helpful_player"),
+        Index("ix_review_helpful_review", "review_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    review_id: Mapped[str] = mapped_column(String(32), ForeignKey("quiz_reviews.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class QuizFavorite(Base):
+    """Player private bookmark for saving quizzes."""
+
+    __tablename__ = "quiz_favorites"
+    __table_args__ = (
+        UniqueConstraint("player_id", "quiz_id", name="uq_player_quiz_favorite"),
+        Index("ix_quiz_favorites_player", "player_id"),
+        Index("ix_quiz_favorites_quiz", "quiz_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    quiz_id: Mapped[str] = mapped_column(String(64), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    quiz: Mapped[Quiz] = relationship()
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
+
+
+class QuizCollection(Base):
+    """User-created playlist/curriculum of quizzes."""
+
+    __tablename__ = "quiz_collections"
+    __table_args__ = (
+        Index("ix_quiz_collections_owner", "owner_id"),
+        Index("ix_quiz_collections_vis", "visibility"),
+        CheckConstraint("visibility IN ('private', 'unlisted', 'public')", name="ck_col_visibility"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    visibility: Mapped[str] = mapped_column(String(16), default="public", nullable=False)
+    cover_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    item_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    owner: Mapped[PlayerProfile] = relationship(foreign_keys=[owner_id])
+    items: Mapped[list["QuizCollectionItem"]] = relationship(
+        back_populates="collection", cascade="all, delete-orphan", order_by="QuizCollectionItem.position"
+    )
+
+
+class QuizCollectionItem(Base):
+    """Ordered member quiz in a QuizCollection."""
+
+    __tablename__ = "quiz_collection_items"
+    __table_args__ = (
+        UniqueConstraint("collection_id", "quiz_id", name="uq_col_item_quiz"),
+        Index("ix_col_items_collection", "collection_id"),
+        Index("ix_col_items_quiz", "quiz_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    collection_id: Mapped[str] = mapped_column(String(32), ForeignKey("quiz_collections.id", ondelete="CASCADE"), nullable=False)
+    quiz_id: Mapped[str] = mapped_column(String(64), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    collection: Mapped[QuizCollection] = relationship(back_populates="items")
+    quiz: Mapped[Quiz] = relationship()
+
+
+class CommunityReport(Base):
+    """Persistent moderation report for community content."""
+
+    __tablename__ = "community_reports"
+    __table_args__ = (
+        Index("ix_comm_reports_target", "target_type", "target_id"),
+        Index("ix_comm_reports_status_created", "status", "created_at"),
+        CheckConstraint("status IN ('open', 'under_review', 'action_taken', 'dismissed')", name="ck_report_status"),
+        CheckConstraint("target_type IN ('quiz', 'review', 'creator', 'question')", name="ck_report_target_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    reporter_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="open", nullable=False)
+    assigned_moderator_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("player_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    moderator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    reporter: Mapped[PlayerProfile] = relationship(foreign_keys=[reporter_id])
+    assigned_moderator: Mapped[PlayerProfile | None] = relationship(foreign_keys=[assigned_moderator_id])
+
+
+class ModerationAction(Base):
+    """Audit log of decisions and actions taken by moderators."""
+
+    __tablename__ = "moderation_actions"
+    __table_args__ = (
+        Index("ix_mod_actions_mod", "moderator_id"),
+        Index("ix_mod_actions_target", "target_type", "target_id"),
+        Index("ix_mod_actions_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    report_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("community_reports.id", ondelete="SET NULL"), nullable=True
+    )
+    moderator_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    moderator: Mapped[PlayerProfile] = relationship(foreign_keys=[moderator_id])
+    report: Mapped[CommunityReport | None] = relationship()
+
+
+class PlayerRole(Base):
+    """Role/permission assignments such as community moderator or admin."""
+
+    __tablename__ = "player_roles"
+    __table_args__ = (
+        UniqueConstraint("player_id", "role", name="uq_player_role"),
+        Index("ix_player_roles_role", "role"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), ForeignKey("player_profiles.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    granted_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    player: Mapped[PlayerProfile] = relationship(foreign_keys=[player_id])
+
 
 
 

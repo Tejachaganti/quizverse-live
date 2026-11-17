@@ -146,6 +146,7 @@ def _run_social_checks(browser, origin: str) -> None:
     # 3. Player Alpha opens Social Tab & searches for Beta
     page_a.get_by_role("button", name="Social").click()
     expect(page_a.locator(".social-header h1")).to_contain_text("Social Hub")
+    page_a.locator('.social-nav [data-tab="friends"]').click()
     expect(page_a.locator(".social-empty-state")).to_contain_text("No Friends Yet")
 
     # Switch to Find Players tab

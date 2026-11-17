@@ -83,6 +83,8 @@ from quizverse.persistence.notifications import (
 from quizverse.notification_api import install_notification_api
 from quizverse.intelligence import AIIntelligenceService
 from quizverse.intelligence_api import register_intelligence_api
+from quizverse.community import CommunityService
+from quizverse.community_api import register_community_api
 from quizverse.persistence.player_identity import ProcessRateLimiter
 
 MAX_MESSAGE_BYTES = 4096
@@ -455,6 +457,16 @@ def create_app(
     install_messaging_api(app, messaging_service, player_identities, presence_service)
     install_notification_api(app, notification_service, social_intelligence_service, player_identities, presence_service)
     register_intelligence_api(app, intelligence_service, player_identities)
+
+    community_service = CommunityService(
+        database=persistence,
+        notification_service=notification_service,
+        social_service=block_service,
+        quality_analyzer=intelligence_service.quality_analyzer,
+        duplicate_detector=intelligence_service.duplicate_detector,
+    )
+    app.state.community_service = community_service
+    register_community_api(app, community_service, player_identities)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str | bool | int]:

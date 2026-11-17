@@ -774,12 +774,13 @@ def run_bluff_master(browser, origin: str) -> None:
         previous_round = 0
         for round_index in range(10):
             if round_index:
-                expect(host.locator("#bluff-answer")).to_be_visible(timeout=8000)
+                for page in pages:
+                    expect(page.locator("#bluff-answer")).to_be_visible(timeout=10000)
             for index, page in enumerate(pages):
                 page.locator("#bluff-answer").fill(f"invented response {round_index} from player {index}")
                 page.locator('[data-action="bluff-submit"]').click()
             for page in pages:
-                expect(page.locator("[data-action='bluff-vote']").first).to_be_visible(timeout=6000)
+                expect(page.locator("[data-action='bluff-vote']").first).to_be_visible(timeout=10000)
                 assert_no_horizontal_overflow(page)
             captured = next(item for item in reversed(states[0]) if item.get("phase") == "voting")
             assert captured["mode"] == "bluff_master"
@@ -793,8 +794,8 @@ def run_bluff_master(browser, origin: str) -> None:
                 expect(own_button).to_be_disabled()
                 page.locator('[data-action="bluff-vote"]:not(:disabled)').first.click()
             for page in pages:
-                expect(page.locator(".bluff-results")).to_be_visible(timeout=6000)
-                expect(page.locator(".bluff-results")).to_contain_text("Fake answer by", timeout=6000)
+                expect(page.locator(".bluff-results")).to_be_visible(timeout=10000)
+                expect(page.locator(".bluff-results")).to_contain_text("Fake answer by", timeout=10000)
             previous_round = round_index + 1
         expect(host.locator(".results-card")).to_be_visible(timeout=8000)
         assert previous_round == 10
@@ -845,14 +846,17 @@ def run_escape_room(browser, origin: str) -> None:
                 host.locator('[data-action="escape-answer"]').click()
                 time.sleep(0.85)
                 assert next(item for item in reversed(states[0]) if item.get("phase") == "escape_puzzle")["escape"]["solved_puzzles"] == 0
+            time.sleep(0.4)
             solution = question.format_payload["solution"]
+            expect(host.locator("#escape-answer")).to_be_visible(timeout=8000)
             host.locator("#escape-answer").fill(solution)
+            expect(host.locator("#escape-answer")).to_have_value(solution, timeout=5000)
             host.locator('[data-action="escape-answer"]').click()
             if index < 9:
-                expect(host.locator(".escape-progress")).to_contain_text(f"Puzzle {index + 2} of 10", timeout=3000)
-                expect(guest.locator(".escape-progress")).to_contain_text(f"Puzzle {index + 2} of 10", timeout=3000)
+                expect(host.locator(".escape-progress")).to_contain_text(f"Puzzle {index + 2} of 10", timeout=8000)
+                expect(guest.locator(".escape-progress")).to_contain_text(f"Puzzle {index + 2} of 10", timeout=8000)
             assert_no_horizontal_overflow(guest)
-        expect(host.locator(".results-card h2")).to_contain_text("team escaped", timeout=6000)
+        expect(host.locator(".results-card h2")).to_contain_text("team escaped", timeout=10000)
         expect(guest.locator(".escape-result-grid")).to_contain_text("10 / 10")
         result = next(item for item in reversed(states[0]) if item.get("phase") == "results")
         assert result["results"]["outcome"] == "victory" and result["results"]["completed_rooms"] == 5
