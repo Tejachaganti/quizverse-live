@@ -54,7 +54,7 @@
     const headers = new Headers(options.headers || {});
     if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     if (owner && state.ownerToken) headers.set('Authorization', `Bearer ${state.ownerToken}`);
-    return fetch(path, { ...options, headers, cache: 'no-store' }).then(async response => {
+    return QuizVerseAPI.fetch(path, { ...options, headers, cache: 'no-store' }).then(async response => {
       let data = null;
       try { data = await response.json(); } catch { /* Empty and malformed error bodies are handled safely. */ }
       return { response, data };

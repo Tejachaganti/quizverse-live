@@ -23,8 +23,9 @@ EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 def main() -> None:
-    (PROJECT_ROOT / "tmp").mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="quizverse-nine-mode-", dir=PROJECT_ROOT / "tmp") as temporary:
+    # Use the system temp directory; some managed workspaces deny access to the
+    # repository's ignored `tmp` directory.
+    with tempfile.TemporaryDirectory(prefix="quizverse-nine-mode-") as temporary:
         database_path = Path(temporary) / "nine-mode.sqlite3"
         database_url = f"sqlite:///{database_path.as_posix()}"
         environment = {**os.environ, "DATABASE_URL": database_url}

@@ -79,12 +79,16 @@ def verify_alembic_offline() -> None:
     ]
     env = os.environ.copy()
     env["DATABASE_URL"] = "postgresql+psycopg://user:pass@localhost:5432/quizverse_verify"
+    # Offline DDL includes Unicode migration literals; Windows' legacy console code page
+    # cannot encode/decode them reliably.
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         cmd,
         cwd=str(PROJECT_ROOT),
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     if result.returncode != 0:
         print(f"      ERROR in Alembic PostgreSQL compilation:\n{result.stderr}")
@@ -151,10 +155,10 @@ def verify_live_connection() -> None:
         print("      To verify against a live PostgreSQL instance, set:")
         print("        $env:POSTGRES_TEST_URL = 'postgresql+psycopg://username:password@host:5432/database'")
         print("        python scripts/verify_postgresql_integration.py")
-        print("      All models, migrations, pooling, and dialect rules have been 100% verified.")
+        print("      Offline model DDL, migration compilation, pooling, and dialect checks passed; live connectivity remains unverified.")
         return
 
-    print(f"      Attempting live connection to: {live_url.split('@')[-1] if '@' in live_url else live_url}")
+    print("      Attempting live connection (connection URL is not displayed).")
     try:
         db = Database(live_url)
         if not db.ping():
@@ -185,7 +189,7 @@ def main() -> None:
     verify_production_config()
     verify_live_connection()
     print("=" * 70)
-    print("POSTGRESQL INTEGRATION VERIFICATION COMPLETE (Exit Code: 0)")
+    print("POSTGRESQL CONFIGURATION VERIFICATION COMPLETE; LIVE STATUS REPORTED ABOVE")
     print("=" * 70)
 
 

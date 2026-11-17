@@ -19,8 +19,9 @@ EDGE_PATH = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 def main() -> None:
-    (PROJECT_ROOT / "tmp").mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="quizverse-ui-", dir=PROJECT_ROOT / "tmp") as temporary_directory:
+    # Keep browser-test artifacts in the OS temp area, which is writable even
+    # when the workspace's ignored `tmp` directory has restrictive ACLs.
+    with tempfile.TemporaryDirectory(prefix="quizverse-ui-") as temporary_directory:
         database_path = Path(temporary_directory) / "quizverse-ui.sqlite3"
         database_url = f"sqlite:///{database_path.as_posix()}"
         environment = {**os.environ, "DATABASE_URL": database_url}
@@ -90,6 +91,16 @@ def wait_for_server(origin: str, process: subprocess.Popen) -> None:
     raise RuntimeError("Temporary FastAPI server did not become healthy.")
 
 
+def navigate(page: Page, view: str) -> None:
+    """Choose the visible navigation control for the page's responsive layout."""
+    primary = page.locator("#primary-navigation")
+    if primary.is_visible():
+        primary.locator(f'[data-view="{view}"]').click()
+        return
+    page.locator("#mobile-menu-btn").click()
+    page.locator(f'#mobile-nav-drawer [data-view="{view}"]').click()
+
+
 def verify_browser_flows(origin: str) -> None:
     with sync_playwright() as playwright, ExitStack() as cleanup:
         browser = (
@@ -118,7 +129,7 @@ def verify_browser_flows(origin: str) -> None:
         owner.goto(origin, wait_until="domcontentloaded")
         owner.keyboard.press("Tab")
         assert owner.locator(":focus-visible").count() > 0, "Keyboard tab focus is not visibly indicated."
-        owner.locator('[data-view="library"]').focus()
+        owner.locator('[data-view="library"]').first.focus()
         owner.keyboard.press("Enter")
         expect(owner.get_by_role("heading", name="Find your next great question.")).to_be_visible()
         assert_no_horizontal_overflow(owner)
@@ -232,7 +243,7 @@ def verify_browser_flows(origin: str) -> None:
         assert owner_key not in invalid_response.text()
 
         guest.goto(origin, wait_until="domcontentloaded")
-        guest.locator('[data-view="library"]').click()
+        navigate(guest, "library")
         guest.locator('#quiz-search-form [name="q"]').fill("Stage Four Orbit Quiz")
         guest.get_by_role("button", name="Search quizzes").click()
         public_card = guest.locator(".library-card").filter(has_text="Stage Four Orbit Quiz")
@@ -335,7 +346,7 @@ def verify_browser_flows(origin: str) -> None:
         assert topic_authoring.status == 200
         assert topic_authoring.json()["provenance"] == "ai_assisted"
         owner.reload(wait_until="domcontentloaded")
-        owner.locator('[data-view="library"]').click()
+        navigate(owner, "library")
         owner.get_by_role("tab", name="My quizzes").click()
         topic_card = owner.locator(".library-card").filter(has_text="Operating Systems quiz")
         expect(topic_card).to_be_visible()
@@ -357,17 +368,17 @@ def verify_browser_flows(origin: str) -> None:
         document_record = json_module.loads(owner.evaluate("sessionStorage.getItem('qv-unsaved-quiz')"))
         assert document_record["visibility"] == "private"
         owner.reload(wait_until="domcontentloaded")
-        owner.locator('[data-view="library"]').click()
+        navigate(owner, "library")
         owner.get_by_role("tab", name="My quizzes").click()
         expect(owner.locator(".library-card").filter(has_text="Uploaded document quiz")).to_be_visible()
 
         # The UI navigation leaves two independent live room sessions connected and intact.
-        owner.locator('[data-view="play"]').click()
+        navigate(owner, "play")
         owner.locator("#player-name").fill("Library Host")
         owner.locator('[data-action="create"]').click()
         expect(owner.locator(".room-code")).to_be_visible()
         room_code = owner.locator(".room-code").inner_text()
-        guest.locator('[data-view="play"]').click()
+        navigate(guest, "play")
         guest.locator("#player-name").fill("Library Guest")
         guest.locator('[data-action="join"]').click()
         guest.locator("#room-code").fill(room_code)
@@ -377,16 +388,16 @@ def verify_browser_flows(origin: str) -> None:
         owner.locator('[data-action="start"]').click()
         expect(owner.locator(".answer-button").first).to_be_visible(timeout=6000)
         round_before = owner.locator(".round-tag").inner_text()
-        owner.locator('[data-view="library"]').click()
+        navigate(owner, "library")
         expect(owner.get_by_role("heading", name="Find your next great question.")).to_be_visible()
         expect(owner.locator("#connection-status")).to_contain_text("ARENA LINK LIVE")
-        owner.locator('[data-view="play"]').click()
+        navigate(owner, "play")
         expect(owner.locator(".round-tag")).to_have_text(round_before)
         expect(guest.locator(".answer-button").first).to_be_visible()
 
         # Tablet and reduced-motion checks use the public library view.
         tablet.goto(origin, wait_until="domcontentloaded")
-        tablet.locator('[data-view="library"]').click()
+        navigate(tablet, "library")
         assert_no_horizontal_overflow(tablet)
         tablet.emulate_media(reduced_motion="reduce")
         expect(tablet.locator(".library-card").first).to_be_visible()

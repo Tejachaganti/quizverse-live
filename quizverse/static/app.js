@@ -216,8 +216,7 @@
   }
   function connect() {
     if (state.socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(state.socket.readyState)) return;
-    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${scheme}//${location.host}/ws`);
+    const socket = new WebSocket(QuizVerseAPI.websocket('/ws'));
     state.socket = socket;
     socket.addEventListener('open', () => {
       setConnection(true);
@@ -325,11 +324,11 @@
       host.innerHTML = `<fieldset><legend>Topic preferences</legend>${state.categories.map(c=>`<label class="topic-preference">${escapeHtml(c.display_name)}<select class="field" data-topic-id="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.display_name)} preference">${[['increase','Increase'],['normal','Normal'],['decrease','Decrease'],['exclude','Exclude']].map(([v,l])=>`<option value="${v}" ${((state.preferences.topics[c.id]||'normal')===v)?'selected':''}>${l}</option>`).join('')}</select></label>`).join('')}</fieldset>`;
     };
     drawTopics();
-    if (!state.categories.length) fetch('/api/categories').then(r=>r.ok?r.json():[]).then(tree=>{const flatten=nodes=>nodes.flatMap(n=>[{id:n.id,display_name:n.display_name},...flatten(n.children||[])]);state.categories=flatten(tree);const validIds=new Set(state.categories.map(c=>c.id));state.preferences.topics=Object.fromEntries(Object.entries(state.preferences.topics).filter(([id])=>validIds.has(id)));try{localStorage.setItem(PREFERENCE_KEY,JSON.stringify(state.preferences));}catch{}drawTopics();picker.querySelector('#match-categories').innerHTML=state.categories.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)}</option>`).join('');}).catch(()=>{picker.querySelector('#player-topic-settings').innerHTML='<p class="microcopy">Topic choices could not be loaded.</p>';});
+    if (!state.categories.length) QuizVerseAPI.fetch('/api/categories').then(r=>r.ok?r.json():[]).then(tree=>{const flatten=nodes=>nodes.flatMap(n=>[{id:n.id,display_name:n.display_name},...flatten(n.children||[])]);state.categories=flatten(tree);const validIds=new Set(state.categories.map(c=>c.id));state.preferences.topics=Object.fromEntries(Object.entries(state.preferences.topics).filter(([id])=>validIds.has(id)));try{localStorage.setItem(PREFERENCE_KEY,JSON.stringify(state.preferences));}catch{}drawTopics();picker.querySelector('#match-categories').innerHTML=state.categories.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)}</option>`).join('');}).catch(()=>{picker.querySelector('#player-topic-settings').innerHTML='<p class="microcopy">Topic choices could not be loaded.</p>';});
     const fillQuizChoices = () => {
       const mode = select.value;
       const format = mode === 'bluff_master' ? 'open_ended' : mode === 'escape_room' ? 'puzzle' : 'multiple_choice';
-      fetch(`/api/quizzes?limit=100&question_format=${format}`).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{
+      QuizVerseAPI.fetch(`/api/quizzes?limit=100&question_format=${format}`).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{
         state.publicQuizzes=data.quizzes||[];
         const selectQuizzes=picker.querySelector('#match-quiz');
         const publicOptions=state.publicQuizzes.map(q=>new Option(q.title,q.id));
@@ -338,8 +337,8 @@
       }).catch(()=>{});
     };
     const ownerCapability = sessionStorage.getItem('qv-owner-capability') || '';
-    if (ownerCapability) fetch('/api/quizzes/mine',{headers:{Authorization:`Bearer ${ownerCapability}`}}).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.ownedQuizzes=(data.quizzes||[]).filter(q=>q.status==='published');fillQuizChoices();}).catch(()=>{});
-    fetch('/api/exam-collections').then(r=>r.ok?r.json():[]).then(items=>{state.examCollections=items;const exam=picker.querySelector('#match-exam');exam.innerHTML='<option value="">Any / not applicable</option>'+items.map(x=>`<option value="${escapeHtml(x.id)}">${escapeHtml(x.display_name)}</option>`).join('');}).catch(()=>{});
+    if (ownerCapability) QuizVerseAPI.fetch('/api/quizzes/mine',{headers:{Authorization:`Bearer ${ownerCapability}`}}).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.ownedQuizzes=(data.quizzes||[]).filter(q=>q.status==='published');fillQuizChoices();}).catch(()=>{});
+    QuizVerseAPI.fetch('/api/exam-collections').then(r=>r.ok?r.json():[]).then(items=>{state.examCollections=items;const exam=picker.querySelector('#match-exam');exam.innerHTML='<option value="">Any / not applicable</option>'+items.map(x=>`<option value="${escapeHtml(x.id)}">${escapeHtml(x.display_name)}</option>`).join('');}).catch(()=>{});
     actions.before(picker);
     const select = picker.querySelector('#game-mode');
     const teamOption = document.createElement('option');
@@ -1126,7 +1125,7 @@
       let url = '/api/tournaments?limit=50';
       if (state.tournamentsFilterStatus) url += `&status=${encodeURIComponent(state.tournamentsFilterStatus)}`;
       if (state.tournamentsFilterMode) url += `&mode=${encodeURIComponent(state.tournamentsFilterMode)}`;
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await QuizVerseAPI.fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error('Tournaments are temporarily unavailable.');
       const data = await res.json();
       state.tournamentsList = data.tournaments || [];
@@ -1147,9 +1146,9 @@
     state.tournamentLoadingDetail = true;
     try {
       const [detailRes, bracketRes, auditRes] = await Promise.all([
-        fetch(`/api/tournaments/${tournamentId}`, { cache: 'no-store' }),
-        fetch(`/api/tournaments/${tournamentId}/bracket`, { cache: 'no-store' }),
-        fetch(`/api/tournaments/${tournamentId}/audit`, { cache: 'no-store' }),
+        QuizVerseAPI.fetch(`/api/tournaments/${tournamentId}`, { cache: 'no-store' }),
+        QuizVerseAPI.fetch(`/api/tournaments/${tournamentId}/bracket`, { cache: 'no-store' }),
+        QuizVerseAPI.fetch(`/api/tournaments/${tournamentId}/audit`, { cache: 'no-store' }),
       ]);
       if (detailRes.ok) state.selectedTournamentDetail = await detailRes.json();
       if (bracketRes.ok) state.selectedTournamentBracket = await bracketRes.json();
@@ -1482,7 +1481,7 @@
       let url = '/api/leagues?limit=50';
       if (state.leaguesFilterStatus) url += `&status=${encodeURIComponent(state.leaguesFilterStatus)}`;
       if (state.leaguesFilterMode) url += `&mode=${encodeURIComponent(state.leaguesFilterMode)}`;
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await QuizVerseAPI.fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error('Leagues are temporarily unavailable.');
       const data = await res.json();
       state.leaguesList = data.leagues || [];
@@ -1505,7 +1504,7 @@
   async function refreshLeagueDetail(leagueId) {
     state.leagueLoadingDetail = true;
     try {
-      const res = await fetch(`/api/leagues/${leagueId}`, { cache: 'no-store' });
+      const res = await QuizVerseAPI.fetch(`/api/leagues/${leagueId}`, { cache: 'no-store' });
       if (res.ok) state.selectedLeagueDetail = await res.json();
     } catch (err) {
       notify(err.message || 'Could not load league details.');
@@ -1518,8 +1517,8 @@
     state.leagueLoadingDetail = true;
     try {
       const [seasonRes, auditRes] = await Promise.all([
-        fetch(`/api/leagues/${leagueId}/seasons/${seasonId}`, { cache: 'no-store' }),
-        fetch(`/api/leagues/${leagueId}/seasons/${seasonId}/audit`, { cache: 'no-store' }),
+        QuizVerseAPI.fetch(`/api/leagues/${leagueId}/seasons/${seasonId}`, { cache: 'no-store' }),
+        QuizVerseAPI.fetch(`/api/leagues/${leagueId}/seasons/${seasonId}/audit`, { cache: 'no-store' }),
       ]);
       if (seasonRes.ok) state.selectedSeasonDetail = await seasonRes.json();
       if (auditRes.ok) state.selectedSeasonAudit = await auditRes.json();
@@ -1994,7 +1993,7 @@
       const url = scopeParam === 'mode'
         ? `/api/rankings?scope=mode&mode=${encodeURIComponent(state.rankingsMode)}&limit=20&offset=${state.rankingsPage * 20}`
         : `/api/rankings?scope=global&limit=20&offset=${state.rankingsPage * 20}`;
-      const fetches = [fetch(url, { cache: 'no-store' })];
+      const fetches = [QuizVerseAPI.fetch(url, { cache: 'no-store' })];
       if (state.profileCredential) {
         fetches.push(playerApi('/api/player-profiles/me/ratings'));
       }
@@ -2020,7 +2019,7 @@
     const headers = new Headers(options.headers || {});
     if (state.profileCredential) headers.set('Authorization', `Bearer ${state.profileCredential}`);
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    return fetch(path, { ...options, headers, cache: 'no-store' }).then(async response => {
+    return QuizVerseAPI.fetch(path, { ...options, headers, cache: 'no-store' }).then(async response => {
       let data = null;
       try { data = await response.json(); } catch { /* Empty responses are valid for deletion. */ }
       return { response, data };
@@ -2112,8 +2111,7 @@
       const { response, data } = await playerApi('/api/presence/ticket', { method: 'POST' });
       if (!response.ok || !data?.ticket) return;
       const ticket = data.ticket;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/presence`;
+      const wsUrl = QuizVerseAPI.websocket('/ws/presence');
       const ws = new WebSocket(wsUrl);
       state.presenceWs = ws;
 
@@ -6520,14 +6518,14 @@
       try {
         let cap = sessionStorage.getItem('qv-owner-capability');
         if (!cap) {
-          const capRes = await fetch('/api/quiz-owners', { method: 'POST' });
+          const capRes = await QuizVerseAPI.fetch('/api/quiz-owners', { method: 'POST' });
           if (capRes.ok) {
             const capData = await capRes.json();
             cap = capData.capability;
             sessionStorage.setItem('qv-owner-capability', cap);
           }
         }
-        const createRes = await fetch('/api/quizzes', {
+        const createRes = await QuizVerseAPI.fetch('/api/quizzes', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

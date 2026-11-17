@@ -70,6 +70,15 @@ def test_cors_middleware_headers():
         assert resp.headers.get("access-control-allow-credentials") == "true"
 
 
+def test_empty_cors_configuration_does_not_enable_wildcard(monkeypatch):
+    monkeypatch.setenv("ALLOWED_ORIGINS", "")
+    app = create_app(database=Database("sqlite:///:memory:"))
+    with TestClient(app) as client:
+        resp = client.get("/health", headers={"Origin": "https://unexpected.example"})
+        assert resp.status_code == 200
+        assert resp.headers.get("access-control-allow-origin") is None
+
+
 def test_production_environment_rejects_sqlite(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///./quizverse.db")
@@ -82,6 +91,13 @@ def test_production_environment_accepts_postgresql(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@host:5432/db")
     url = database_url_from_env()
     assert "postgresql+psycopg://" in url
+
+
+def test_supabase_driver_neutral_url_selects_installed_psycopg(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@db.example:5432/postgres?sslmode=require")
+    url = database_url_from_env()
+    assert url == "postgresql+psycopg://user:pass@db.example:5432/postgres?sslmode=require"
 
 
 def test_postgresql_connection_pool_configuration(monkeypatch):

@@ -238,9 +238,11 @@ The browser script uses three isolated browser contexts (desktop, tablet, and mo
 - Playwright Edge verification: independent desktop, tablet, and mobile sessions created/joined, invalid code rejected, host departure transferred control, host session reconnected, synchronized 15-second question deadline observed, simultaneous answers scored, unanswered round timed out, full ten-question match reached final rankings, rematch completed, return-to-lobby succeeded, and the 390 px mobile plus 820 px tablet layouts had no horizontal overflow.
 - Original Node suite: **6 passed** after changing the integration test’s child-process working directory from URL `.pathname` to `fileURLToPath`, fixing Windows drive-path handling.
 - JavaScript syntax (`node --check client/app.js`) and Python bytecode compilation (`python -m compileall`) completed without errors.
-- This workspace has no Git metadata. Tests and browser verification were run locally; no public deployment was created.
+- The project is tracked in Git. Those tests and browser checks were local; no public deployment was created.
 
 ## Deployment assessment: Render free web service
+
+For the prepared split static/API setup using Vercel Hobby, Render Free, and Supabase Free, see [Phase 16 free deployment preparation](docs/PHASE_16_FREE_DEPLOYMENT_PREPARATION_REPORT.md). It documents the manual environment values, migrations, free-tier restrictions, and live-match restart limitations. No service is deployed by this repository.
 
 Render currently documents inbound WebSocket support on web services, and provides a free Python web-service instance suitable for a portfolio demo. The free instance has limits: it idles after 15 minutes without inbound HTTP or WebSocket traffic, may restart, has ephemeral disk, and can take about a minute to resume. Render states free instances are for hobby projects and previews rather than production. Its included-hours, bandwidth, and build-minute limits can suspend service or builds; usage beyond included outbound bandwidth/build minutes can incur charges if a payment method is attached. Review current limits and spend settings before creating a service. See [Render WebSockets](https://render.com/docs/websocket), [free instance limits](https://render.com/docs/free), [web-service setup](https://render.com/docs/web-services), and [Python version pinning](https://render.com/docs/python-version).
 

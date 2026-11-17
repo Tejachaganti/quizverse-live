@@ -424,7 +424,9 @@ def create_app(
     cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins if cors_origins else ["*"],
+        # An explicitly empty allowlist disables cross-origin requests; never fall back
+        # to wildcard CORS for a browser deployment using bearer credentials.
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

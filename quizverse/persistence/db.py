@@ -30,8 +30,12 @@ def database_url_from_env() -> str:
             url = DEFAULT_DATABASE_URL
 
     env_mode = (os.environ.get("ENVIRONMENT") or os.environ.get("ENV") or "").strip().lower()
+    parsed = make_url(url)
+    if parsed.get_backend_name() == "postgresql" and parsed.drivername == "postgresql":
+        # Supabase's copyable connection strings commonly use this driver-neutral scheme.
+        # The project installs Psycopg 3, not psycopg2, so select that installed driver.
+        url = parsed.set(drivername="postgresql+psycopg").render_as_string(hide_password=False)
     if env_mode == "production":
-        parsed = make_url(url)
         if parsed.get_backend_name() != "postgresql":
             raise RuntimeError(
                 "Production environment requires PostgreSQL. "
