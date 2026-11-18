@@ -1,4 +1,4 @@
-/* Local development defaults to the FastAPI origin. The Vercel build replaces this file. */
+/* Local development defaults to the FastAPI origin. The Vercel build injects window.QUIZVERSE_API_BASE_URL above. */
 (() => {
   'use strict';
   const configured = String(window.QUIZVERSE_API_BASE_URL || '').trim();

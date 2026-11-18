@@ -42,8 +42,10 @@ def build(output: Path, api_url: str) -> None:
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite existing build output: {output}")
     shutil.copytree(STATIC, output)
-    config = "window.QUIZVERSE_API_BASE_URL = " + json.dumps(api_origin) + ";\n"
-    (output / "deployment-config.js").write_text(config, encoding="utf-8")
+    target_config = output / "deployment-config.js"
+    original_code = target_config.read_text(encoding="utf-8")
+    config = f"window.QUIZVERSE_API_BASE_URL = {json.dumps(api_origin)};\n\n" + original_code
+    target_config.write_text(config, encoding="utf-8")
 
     websocket_origin = "wss://" + api_origin.removeprefix("https://")
     policy = (

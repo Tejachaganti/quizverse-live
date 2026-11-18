@@ -16,7 +16,9 @@ def test_static_build_injects_only_the_configured_api_origins(tmp_path: Path):
 
     config = (output / "deployment-config.js").read_text(encoding="utf-8")
     html = (output / "index.html").read_text(encoding="utf-8")
-    assert json.loads(config.partition("=")[2].strip().removesuffix(";")) == "https://quizverse-api.example.test"
+    first_line = config.splitlines()[0]
+    assert json.loads(first_line.partition("=")[2].strip().removesuffix(";")) == "https://quizverse-api.example.test"
+    assert "window.QuizVerseAPI" in config
     assert "https://quizverse-api.example.test" in html
     assert "wss://quizverse-api.example.test" in html
     assert (output / "app.js").is_file()
@@ -68,6 +70,33 @@ if (window.QuizVerseAPI.websocket('/ws') !== 'wss://api.quizverse.example/ws') p
 if (window.QuizVerseAPI.fetch('/api/health') !== 'https://api.quizverse.example/api/health') process.exit(3);
 """
     subprocess.run([node, "-e", harness, str(source)], check=True, capture_output=True, text=True)
+
+
+def test_static_build_preserves_quizverse_api_helper(tmp_path: Path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for the frontend URL helper check")
+    output = tmp_path / "site"
+    build(output, "https://quizverse-api.example.test/")
+
+    target_config = output / "deployment-config.js"
+    harness = r"""
+const fs = require('fs');
+const vm = require('vm');
+const window = {
+  location: { origin: 'https://quizverse-live-gamma.vercel.app' },
+  fetch: (url, opts) => ({ url, opts }),
+};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), { window, URL });
+if (window.QUIZVERSE_API_BASE_URL !== 'https://quizverse-api.example.test') process.exit(1);
+if (!window.QuizVerseAPI) process.exit(2);
+if (window.QuizVerseAPI.url('/api/profile') !== 'https://quizverse-api.example.test/api/profile') process.exit(3);
+if (window.QuizVerseAPI.websocket('/ws') !== 'wss://quizverse-api.example.test/ws') process.exit(4);
+if (window.QuizVerseAPI.websocket('/ws/presence') !== 'wss://quizverse-api.example.test/ws/presence') process.exit(5);
+const fetched = window.QuizVerseAPI.fetch('/api/health');
+if (fetched.url !== 'https://quizverse-api.example.test/api/health') process.exit(6);
+"""
+    subprocess.run([node, "-e", harness, str(target_config)], check=True, capture_output=True, text=True)
 
 
 def test_vercel_and_render_manifests_are_prepared():
