@@ -117,6 +117,8 @@ class ConnectionHub:
         self.connections: dict[tuple[str, str], WebSocket] = {}
         self.peer_attempts: dict[str, deque[float]] = {}
         self.connection_lock = asyncio.Lock()
+        self.rate_limit_count = int(os.getenv("WS_PEER_RATE_LIMIT", "60"))
+        self.rate_limit_window = float(os.getenv("WS_PEER_RATE_WINDOW", "60.0"))
 
     def allow_origin(self, websocket: WebSocket) -> bool:
         return _valid_origin(websocket)
@@ -128,14 +130,14 @@ class ConnectionHub:
                 stale_peers = [
                     address
                     for address, recent in self.peer_attempts.items()
-                    if not recent or now - recent[-1] >= 60
+                    if not recent or now - recent[-1] >= self.rate_limit_window
                 ]
                 for address in stale_peers:
                     self.peer_attempts.pop(address, None)
             attempts = self.peer_attempts.setdefault(peer, deque())
-            while attempts and now - attempts[0] >= 60:
+            while attempts and now - attempts[0] >= self.rate_limit_window:
                 attempts.popleft()
-            if len(attempts) >= 40:
+            if len(attempts) >= self.rate_limit_count:
                 return False
             attempts.append(now)
             return True
@@ -256,16 +258,35 @@ class ConnectionHub:
                 _ = removed_rooms
 
 
+def normalize_origin(value: str | None) -> str:
+    """Normalize origin string by stripping whitespace, quotes, trailing slashes, and lowercasing."""
+    if not value:
+        return ""
+    return value.strip().strip("'\"").rstrip("/").lower()
+
+
 def _allowed_origins() -> set[str]:
     configured = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
-    return {origin.strip() for origin in configured.split(",") if origin.strip()}
+    return {normalize_origin(origin) for origin in configured.split(",") if origin.strip()}
 
 
 def _valid_origin(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if origin is None:
         return True  # Native non-browser clients have no Origin header.
-    return origin in _allowed_origins()
+    return normalize_origin(origin) in _allowed_origins()
+
+
+def _client_peer(websocket: WebSocket) -> str:
+    """Extract client IP address, checking X-Forwarded-For if behind a reverse proxy."""
+    forwarded = websocket.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+        if client_ip:
+            return client_ip
+    if websocket.client and websocket.client.host:
+        return websocket.client.host
+    return "unknown"
 
 
 def _parse_event(raw: str) -> ClientEvent:
@@ -421,7 +442,7 @@ def create_app(
 
     app = FastAPI(title="QuizVerse Live", version="0.1.0", lifespan=lifespan)
     cors_origins_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
-    cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+    cors_origins = [normalize_origin(o) for o in cors_origins_raw.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
         # An explicitly empty allowlist disables cross-origin requests; never fall back
@@ -540,13 +561,23 @@ def create_app(
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
         if not _valid_origin(websocket):
+            raw_origin = websocket.headers.get("origin")
+            logger.warning(
+                "WebSocket /ws handshake rejected: origin not allowed. origin=%r",
+                raw_origin,
+            )
             await websocket.close(code=1008, reason="Origin is not allowed")
             return
-        peer = websocket.client.host if websocket.client else "unknown"
+        peer = _client_peer(websocket)
         if not await hub.allow_connection(peer):
+            logger.warning(
+                "WebSocket /ws handshake rejected: connection rate limit exceeded for peer=%s",
+                peer,
+            )
             await websocket.close(code=1008, reason="Too many connections")
             return
         await websocket.accept()
+        logger.info("WebSocket /ws connection accepted from peer=%s", peer)
         identity: tuple[str, str] | None = None
         received_at: deque[float] = deque()
         try:

@@ -23,16 +23,35 @@ from quizverse.quiz_api import ApiProblem
 logger = logging.getLogger(__name__)
 
 
+def normalize_origin(value: str | None) -> str:
+    """Normalize origin string by stripping whitespace, quotes, trailing slashes, and lowercasing."""
+    if not value:
+        return ""
+    return value.strip().strip("'\"").rstrip("/").lower()
+
+
 def _allowed_origins() -> set[str]:
     configured = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
-    return {origin.strip() for origin in configured.split(",") if origin.strip()}
+    return {normalize_origin(origin) for origin in configured.split(",") if origin.strip()}
 
 
 def _valid_origin(websocket: WebSocket) -> bool:
     origin = websocket.headers.get("origin")
     if origin is None:
         return True
-    return origin in _allowed_origins()
+    return normalize_origin(origin) in _allowed_origins()
+
+
+def _client_peer(websocket: WebSocket) -> str:
+    """Extract client IP address, checking X-Forwarded-For if behind a reverse proxy."""
+    forwarded = websocket.headers.get("x-forwarded-for")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+        if client_ip:
+            return client_ip
+    if websocket.client and websocket.client.host:
+        return websocket.client.host
+    return "unknown"
 
 
 def _authenticated_header(authorization: str | None) -> str:
@@ -83,15 +102,25 @@ def install_presence_api(
     @app.websocket("/ws/presence")
     async def presence_websocket(websocket: WebSocket) -> None:
         if not _valid_origin(websocket):
+            raw_origin = websocket.headers.get("origin")
+            logger.warning(
+                "WebSocket /ws/presence handshake rejected: origin not allowed. origin=%r",
+                raw_origin,
+            )
             await websocket.close(code=1008, reason="Origin is not allowed")
             return
 
-        peer = websocket.client.host if websocket.client else "unknown"
+        peer = _client_peer(websocket)
         if not await app.state.hub.allow_connection(peer):
+            logger.warning(
+                "WebSocket /ws/presence handshake rejected: connection rate limit exceeded for peer=%s",
+                peer,
+            )
             await websocket.close(code=1008, reason="Too many connections")
             return
 
         await websocket.accept()
+        logger.info("WebSocket /ws/presence connection accepted from peer=%s", peer)
         socket_id = secrets.token_hex(16)
         authenticated_player_id: str | None = None
 

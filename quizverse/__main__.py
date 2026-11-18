@@ -15,6 +15,8 @@ def main() -> None:
         ws_max_size=4096,
         server_header=False,
         limit_concurrency=200,
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "*"),
     )
 
 
