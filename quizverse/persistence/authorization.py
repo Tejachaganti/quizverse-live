@@ -454,6 +454,7 @@ class QuizAccessService:
                 exam_collection_ids=exam_ids(_game_category_id(question, quiz)),
                 provenance=question.provenance,
                 format_payload=question.format_payload,
+                explanation=question.explanation,
             )
             for quiz in quizzes for question in quiz.questions
         )

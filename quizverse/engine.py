@@ -148,6 +148,9 @@ class Room:
     completion_error_code: str | None = None
     saved_match_id: str | None = None
     completion_payload: dict[str, object] | None = None
+    round_answers: list[dict[str, int | None]] = field(default_factory=list)
+    bluff_history: list[dict[str, object]] = field(default_factory=list)
+    power_play_history: dict[str, list[dict[str, bool]]] = field(default_factory=dict)
 
 
 class GameEngine:
@@ -639,7 +642,11 @@ class GameEngine:
         if room.match_config.elimination and room.phase == Phase.RESULTS:
             public_players, elimination_summary = self._elimination_results(room)
         result_data = None
+        review_data = None
+        performance_data = None
         if room.phase == Phase.RESULTS:
+            review_data = self._build_post_game_review(room, viewer)
+            performance_data = self._build_performance_analysis(room, viewer, review_data)
             if room.match_config.escape_room:
                 outcome = "victory" if room.round_index >= 10 else "failure"
                 result_data = self._escape_results(room, outcome)
@@ -661,6 +668,10 @@ class GameEngine:
                 )
             if elimination_summary is not None:
                 result_data.update(elimination_summary)
+            if review_data is not None and not room.match_config.escape_room:
+                result_data["review"] = review_data
+            if performance_data is not None and not room.match_config.escape_room and room.match_config.mode != GameMode.SOLO_PRACTICE:
+                result_data["performance_analysis"] = performance_data
         can_start = room.phase == Phase.WAITING and room.host_id == viewer_id and self._can_start(room)
         return {
             "code": room.code,
@@ -709,6 +720,8 @@ class GameEngine:
                 }
                 if result_data is not None else None
             ),
+            **({"review": review_data} if review_data is not None else {}),
+            **({"performance_analysis": performance_data} if performance_data is not None else {}),
             "can_start": can_start,
             "chat_messages": list(room.chat_messages[-50:]),
             **({"can_start_reason": self._can_start_reason(room)} if room.match_config.mode in {GameMode.TEAM_BATTLE, GameMode.SOLO_PRACTICE} or room.match_config.elimination or room.match_config.bluff_master or room.match_config.escape_room else {}),
@@ -982,6 +995,9 @@ class GameEngine:
             room.escape_attempts.clear()
             room.escape_started_at = None
             room.escape_completed_at = None
+            room.round_answers.clear()
+            room.bluff_history.clear()
+            room.power_play_history.clear()
             for player in room.players.values():
                 player.score = 0
                 player.correct = 0
@@ -1095,9 +1111,326 @@ class GameEngine:
                 author = room.players.get(str(option["author_id"]))
                 if author is not None:
                     author.score += 500
+        question = room.questions[room.round_index]
+        payload = question.format_payload or {}
+        canonical = str(payload.get("canonical_answer", "")).strip()
+        round_results = [
+            {
+                "text": option["text"],
+                "correct": bool(option.get("is_correct")),
+                "author": "Correct answer" if option.get("is_correct") else getattr(room.players.get(str(option.get("author_id"))), "name", "Player"),
+                "author_id": option.get("author_id"),
+                "fooled_players": [
+                    getattr(room.players.get(voter_id), "name", voter_id)
+                    for voter_id, selected_id in room.bluff_votes.items()
+                    if selected_id == option.get("id")
+                ],
+            }
+            for option in room.bluff_options
+        ]
+        room.bluff_history.append({
+            "round_index": room.round_index,
+            "submissions": dict(room.bluff_submissions),
+            "options": [
+                {
+                    "id": item.get("id"),
+                    "text": item.get("text"),
+                    "is_correct": bool(item.get("is_correct")),
+                    "author_id": item.get("author_id"),
+                    "author_name": "Correct answer" if item.get("is_correct") else getattr(room.players.get(str(item.get("author_id"))), "name", "Player"),
+                }
+                for item in room.bluff_options
+            ],
+            "votes": dict(room.bluff_votes),
+            "results": round_results,
+            "canonical_answer": canonical,
+        })
         room.phase = Phase.REVEAL
         started = self._monotonic() if started_at is None else started_at
         self._set_deadline_at(room, started + 5.0)
+
+    def _build_post_game_review(self, room: Room, viewer: Player | None) -> dict[str, object] | None:
+        if viewer is None or not room.questions:
+            return None
+
+        # Mode: Escape Room
+        if room.match_config.escape_room:
+            puzzles_review: list[dict[str, object]] = []
+            solved_count = min(len(room.questions), room.round_index)
+            for idx, question in enumerate(room.questions):
+                payload = question.format_payload or {}
+                solution = str(payload.get("solution", "")).strip()
+                hint = payload.get("hint")
+                hint_used = idx in room.escape_hinted_puzzles
+                is_solved = idx < solved_count
+                puzzles_review.append({
+                    "number": idx + 1,
+                    "prompt": question.prompt,
+                    "category": question.category or "Logic Puzzles",
+                    "options": [],
+                    "submitted_choice": None,
+                    "submitted_text": solution if is_solved else None,
+                    "correct_choice": None,
+                    "correct_text": solution,
+                    "status": "correct" if is_solved else "unanswered",
+                    "eliminated_prior": False,
+                    "explanation": getattr(question, "explanation", None),
+                    "escape": {
+                        "room": ((idx) // 2) + 1,
+                        "puzzle_index": idx,
+                        "unlock_code": solution,
+                        "hint": hint,
+                        "hint_used": hint_used,
+                        "solved": is_solved,
+                    },
+                })
+            return {
+                "summary": {
+                    "total_questions": len(room.questions),
+                    "correct_answers": solved_count,
+                    "incorrect_answers": 0,
+                    "unanswered_questions": len(room.questions) - solved_count,
+                    "accuracy_percent": round((solved_count / len(room.questions)) * 100, 1) if room.questions else None,
+                    "score": None,
+                    "mode": "escape_room",
+                },
+                "questions": puzzles_review,
+            }
+
+        # Mode: Bluff Master
+        if room.match_config.bluff_master:
+            bluff_reviews: list[dict[str, object]] = []
+            correct_votes = 0
+            incorrect_votes = 0
+            unanswered_votes = 0
+            total_fooled = 0
+            for idx, question in enumerate(room.questions):
+                payload = question.format_payload or {}
+                canonical = str(payload.get("canonical_answer", "")).strip()
+                history_item = room.bluff_history[idx] if idx < len(room.bluff_history) else None
+                user_fake = history_item["submissions"].get(viewer.id) if history_item else None
+                voted_opt_id = history_item["votes"].get(viewer.id) if history_item else None
+                round_opts = history_item.get("options", []) if history_item else []
+                voted_opt = next((opt for opt in round_opts if opt.get("id") == voted_opt_id), None)
+                voted_text = str(voted_opt.get("text", "")) if voted_opt else None
+                voted_correct = bool(voted_opt and voted_opt.get("is_correct"))
+
+                fooled: list[str] = []
+                if history_item and "results" in history_item:
+                    for res in history_item["results"]:
+                        if res.get("author_id") == viewer.id:
+                            fooled = [str(name) for name in res.get("fooled_players", [])]
+                            total_fooled += len(fooled)
+
+                if voted_opt_id is None:
+                    status = "unanswered"
+                    unanswered_votes += 1
+                elif voted_correct:
+                    status = "correct"
+                    correct_votes += 1
+                else:
+                    status = "incorrect"
+                    incorrect_votes += 1
+
+                bluff_reviews.append({
+                    "number": idx + 1,
+                    "prompt": question.prompt,
+                    "category": question.category or "General Knowledge",
+                    "options": [str(opt.get("text", "")) for opt in round_opts],
+                    "submitted_choice": None,
+                    "submitted_text": user_fake,
+                    "correct_choice": None,
+                    "correct_text": canonical,
+                    "status": status,
+                    "eliminated_prior": False,
+                    "explanation": getattr(question, "explanation", None),
+                    "bluff": {
+                        "submitted_bluff": user_fake,
+                        "voted_text": voted_text,
+                        "voted_correct": voted_correct,
+                        "fooled_players": fooled,
+                        "all_options": [
+                            {
+                                "text": str(opt.get("text", "")),
+                                "author": str(opt.get("author_name") or ("Correct Answer" if opt.get("is_correct") else "Fake Answer")),
+                                "is_correct": bool(opt.get("is_correct")),
+                                "is_yours": opt.get("author_id") == viewer.id,
+                            }
+                            for opt in round_opts
+                        ],
+                    },
+                })
+            attempted = correct_votes + incorrect_votes
+            return {
+                "summary": {
+                    "total_questions": len(room.questions),
+                    "correct_answers": correct_votes,
+                    "incorrect_answers": incorrect_votes,
+                    "unanswered_questions": unanswered_votes,
+                    "accuracy_percent": round((correct_votes / attempted) * 100, 1) if attempted else None,
+                    "score": viewer.score,
+                    "fooled_players_count": total_fooled,
+                    "mode": "bluff_master",
+                },
+                "questions": bluff_reviews,
+            }
+
+        # Multiple-choice modes (Classic, Speed Challenge, Team Battle, Elimination, Solo Practice, Quiz Royale, Power Play)
+        q_reviews: list[dict[str, object]] = []
+        correct_count = 0
+        incorrect_count = 0
+        unanswered_count = 0
+        for idx, question in enumerate(room.questions):
+            round_answers = room.round_answers[idx] if idx < len(room.round_answers) else {}
+            submitted_choice = round_answers.get(viewer.id)
+            is_eliminated_prior = submitted_choice == -2
+
+            if is_eliminated_prior or submitted_choice is None or submitted_choice < 0:
+                status = "unanswered"
+                unanswered_count += 1
+                sub_choice_idx = None
+                sub_text = None
+            elif submitted_choice == question.answer:
+                status = "correct"
+                correct_count += 1
+                sub_choice_idx = submitted_choice
+                sub_text = question.options[submitted_choice] if 0 <= submitted_choice < len(question.options) else None
+            else:
+                status = "incorrect"
+                incorrect_count += 1
+                sub_choice_idx = submitted_choice
+                sub_text = question.options[submitted_choice] if 0 <= submitted_choice < len(question.options) else None
+
+            corr_choice_idx = question.answer
+            corr_text = question.options[corr_choice_idx] if 0 <= corr_choice_idx < len(question.options) else None
+
+            item: dict[str, object] = {
+                "number": idx + 1,
+                "prompt": question.prompt,
+                "category": question.category or "General",
+                "options": list(question.options),
+                "submitted_choice": sub_choice_idx,
+                "submitted_text": sub_text,
+                "correct_choice": corr_choice_idx,
+                "correct_text": corr_text,
+                "status": status,
+                "eliminated_prior": is_eliminated_prior,
+                "explanation": getattr(question, "explanation", None),
+            }
+            if room.match_config.mode == GameMode.TEAM_BATTLE:
+                item["team_id"] = viewer.team_id
+            if room.match_config.power_play:
+                p_hist = room.power_play_history.get(viewer.id, [])
+                if idx < len(p_hist):
+                    item["power_play"] = p_hist[idx]
+
+            q_reviews.append(item)
+
+        attempted = correct_count + incorrect_count
+        return {
+            "summary": {
+                "total_questions": len(room.questions),
+                "correct_answers": correct_count,
+                "incorrect_answers": incorrect_count,
+                "unanswered_questions": unanswered_count,
+                "accuracy_percent": round((correct_count / attempted) * 100, 1) if attempted else None,
+                "score": viewer.score,
+                "mode": room.match_config.mode.value,
+            },
+            "questions": q_reviews,
+        }
+
+    def _build_performance_analysis(
+        self, room: Room, viewer: Player | None, review_data: dict[str, object] | None
+    ) -> dict[str, object] | None:
+        if viewer is None or review_data is None:
+            return None
+
+        from quizverse.intelligence.weakness_detection import WeaknessDetector
+
+        extra_context: dict[str, object] = {
+            "player_score": viewer.score,
+            "has_profile": bool(viewer.profile_id),
+        }
+
+        # Team Battle context: isolate player contribution vs team totals
+        if room.match_config.mode == GameMode.TEAM_BATTLE:
+            violet_score = sum(p.score for p in room.players.values() if p.team_id == "violet")
+            cyan_score = sum(p.score for p in room.players.values() if p.team_id == "cyan")
+            user_team = getattr(viewer, "team_id", None)
+            team_score = violet_score if user_team == "violet" else cyan_score
+            opp_score = cyan_score if user_team == "violet" else violet_score
+            if team_score > opp_score:
+                outcome = "victory"
+            elif team_score < opp_score:
+                outcome = "defeat"
+            else:
+                outcome = "draw"
+            extra_context.update({
+                "team_id": user_team,
+                "team_score": team_score,
+                "opposing_team_name": "Team Cyan" if user_team == "violet" else "Team Violet",
+                "opposing_team_score": opp_score,
+                "team_outcome": outcome,
+            })
+
+        # Elimination context: survivor rounds vs active rounds
+        elif room.match_config.elimination:
+            extra_context.update({
+                "eliminated": viewer.eliminated,
+                "eliminated_round": viewer.eliminated_round,
+                "rounds_survived": (viewer.eliminated_round - 1) if viewer.eliminated and viewer.eliminated_round else len(room.questions),
+            })
+
+        # Power Play context: power-up utilization
+        elif room.match_config.power_play:
+            p_hist = room.power_play_history.get(viewer.id, [])
+            fifty_used = sum(1 for item in p_hist if item.get("fifty_fifty"))
+            double_used = sum(1 for item in p_hist if item.get("double_points"))
+            shield_used = sum(1 for item in p_hist if item.get("shield"))
+            extra_context["power_play_abilities"] = {
+                "fifty_fifty": fifty_used,
+                "double_points": double_used,
+                "shield": shield_used,
+            }
+
+        # Quiz Royale context: survival & lives
+        elif room.match_config.royale:
+            extra_context.update({
+                "lives_remaining": getattr(viewer, "royale_lives", 0),
+                "rounds_survived": getattr(viewer, "royale_rounds_survived", len(room.questions)),
+            })
+
+        # Escape Room context: chamber milestones and hint efficiency
+        elif room.match_config.escape_room:
+            elapsed = 0
+            if room.escape_started_at is not None:
+                finished_at = room.escape_completed_at if room.escape_completed_at is not None else self._monotonic()
+                elapsed = max(0, int(finished_at - room.escape_started_at))
+            extra_context.update({
+                "hints_used": len(room.escape_hinted_puzzles),
+                "hints_remaining": room.escape_hints_remaining,
+                "elapsed_seconds": elapsed,
+                "outcome": "victory" if room.round_index >= 10 else "failure",
+            })
+
+        # Bluff Master context: deception statistics
+        elif room.match_config.bluff_master:
+            bluff_summary = review_data.get("summary", {}) if isinstance(review_data, dict) else {}
+            extra_context.update({
+                "bluffs_submitted": sum(1 for item in room.bluff_history if viewer.id in item.get("submissions", {})),
+                "fooled_players_count": bluff_summary.get("fooled_players_count", 0),
+                "correct_truths_voted": bluff_summary.get("correct_answers", 0),
+                "fooled_votes_cast": bluff_summary.get("incorrect_answers", 0),
+                "unanswered_votes": bluff_summary.get("unanswered_questions", 0),
+            })
+
+        detector = WeaknessDetector()
+        return detector.analyze_session_review(
+            review_data,
+            mode=room.match_config.mode.value,
+            extra_context=extra_context,
+        )
 
     def _escape_results(self, room: Room, outcome: str) -> dict[str, object]:
         elapsed = 0
@@ -1118,6 +1451,23 @@ class GameEngine:
         room.phase = Phase.REVEAL
         question = room.questions[room.round_index]
         question_start = room.question_started_at if room.question_started_at is not None else self._monotonic()
+        round_entry: dict[str, int | None] = {}
+        for player_id, player in room.players.items():
+            if room.match_config.elimination and player.eliminated and player.eliminated_round is not None and player.eliminated_round <= room.round_index:
+                round_entry[player_id] = -2
+            elif player.answer is not None and player.answer.choice >= 0:
+                round_entry[player_id] = player.answer.choice
+            else:
+                round_entry[player_id] = None
+        room.round_answers.append(round_entry)
+        if room.match_config.power_play:
+            for player_id, player in room.players.items():
+                p_list = room.power_play_history.setdefault(player_id, [])
+                p_list.append({
+                    "fifty_fifty": player.power_fifty_round == room.round_index,
+                    "double_points": player.power_double_active,
+                    "shield": player.power_shield_active,
+                })
         for player in room.players.values():
             if room.match_config.elimination and player.eliminated:
                 continue
@@ -1507,6 +1857,9 @@ class GameEngine:
             room.escape_attempts.clear()
             room.escape_started_at = None
             room.escape_completed_at = None
+            room.round_answers.clear()
+            room.bluff_history.clear()
+            room.power_play_history.clear()
             for player in room.players.values():
                 player.score = 0
                 player.correct = 0

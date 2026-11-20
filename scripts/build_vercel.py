@@ -50,8 +50,8 @@ def build(output: Path, api_url: str) -> None:
     websocket_origin = "wss://" + api_origin.removeprefix("https://")
     policy = (
         "default-src 'self'; base-uri 'none'; form-action 'self'; "
-        "object-src 'none'; img-src 'self' data:; font-src 'self' data:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self'; "
+        "object-src 'none'; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; "
         f"connect-src 'self' {api_origin} {websocket_origin}"
     )
     index = output / "index.html"

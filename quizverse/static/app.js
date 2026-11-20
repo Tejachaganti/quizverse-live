@@ -7,6 +7,58 @@
   const PREFERENCE_KEY = 'qv-player-preferences';
   const PLAYER_CREDENTIAL_KEY = 'qv-player-credential';
   const DEFAULT_PREFERENCES = { learning_preset: 'teen_challenge', difficulty: 'medium', language: 'en', topics: {} };
+  const SCHOOL_SUBJECTS = ['Mathematics', 'Science', 'Physics', 'Chemistry', 'Biology', 'Social Studies', 'History', 'Geography', 'Civics', 'English', 'Languages', 'Computer Fundamentals'];
+  const EXAM_HUB_LEVELS = [
+    ['children', 'Children'], ['school', 'School'], ['intermediate', 'Intermediate'], ['college', 'College'],
+    ['competitive', 'Competitive Exams'], ['technology', 'Technology'], ['career', 'Career Preparation'], ['general', 'General Learning'],
+  ];
+  const EXAM_HUB_CATALOG = [
+    { id: 'children', title: 'Children Level', description: 'Build confidence with foundational knowledge and playful practice.', levels: ['children'], groups: [
+      { title: 'Foundations', topics: ['Basic Mathematics', 'Alphabet and Vocabulary', 'English Basics'] },
+      { title: 'Explore the world', topics: ['General Knowledge', 'Science Basics'] },
+      { title: 'Think and play', topics: ['Logical Thinking', 'Brain Games and Fun Quizzes'] },
+    ] },
+    { id: 'school', title: 'School Level', description: 'Browse by school stage, then choose a subject. Curricula vary by board.', levels: ['school'], groups: [
+      ...[['Primary: Classes 1–5', 'primary'], ['Middle: Classes 6–8', 'middle'], ['Secondary: Classes 9–10', 'secondary'], ['Higher Secondary: Classes 11–12', 'higher-secondary']].map(([title, id]) => ({ title, topics: SCHOOL_SUBJECTS.map(subject => `${id === 'primary' ? 'Primary' : id === 'middle' ? 'Middle' : id === 'secondary' ? 'Secondary' : 'Higher Secondary'} · ${subject}`) })),
+    ] },
+    { id: 'intermediate', title: 'Intermediate Level', description: 'Choose a stream and explore subject-wise revision without assuming one board syllabus.', levels: ['intermediate'], groups: [
+      { title: 'Streams', topics: ['MPC · Mathematics', 'MPC · Physics', 'MPC · Chemistry', 'BiPC · Biology', 'BiPC · Physics', 'BiPC · Chemistry', 'MEC · Mathematics', 'MEC · Economics', 'MEC · Commerce', 'CEC · Civics', 'CEC · Economics', 'CEC · Commerce', 'HEC · History', 'HEC · Economics', 'HEC · Civics'] },
+      { title: 'Study approach', topics: ['Subject-wise Practice', 'Revision', 'Topic Selection'] },
+    ] },
+    { id: 'competitive', title: 'Competitive Examinations', description: 'Explore exam families and shared practice areas. No official-provider affiliation is implied.', levels: ['competitive'], groups: [
+      { title: 'Railways', topics: ['RRB NTPC', 'RRB Group D', 'Other Railway Recruitment Examinations'] },
+      { title: 'SSC', topics: ['SSC CGL', 'SSC CHSL', 'SSC MTS', 'Other SSC Examinations'] },
+      { title: 'Banking', topics: ['IBPS PO', 'IBPS Clerk', 'SBI PO', 'SBI Clerk', 'RBI Examinations'] },
+      { title: 'Civil Services', topics: ['UPSC', 'State PSC Examinations', 'APPSC'] },
+      { title: 'Police and Defence', topics: ['Police Recruitment', 'Defence Recruitment', 'Other Government Recruitment Examinations'] },
+      { title: 'Common practice areas', topics: ['General Awareness', 'Mathematics', 'Reasoning', 'English', 'Examination-specific Subjects'] },
+    ] },
+    { id: 'college', title: 'College and University', description: 'Find subject and topic pathways; use your institution’s syllabus as the source of truth.', levels: ['college'], groups: [
+      { title: 'Engineering', topics: ['Engineering', 'Computer Science and IT', 'Electronics and Communication', 'Electrical and Electronics', 'Mechanical Engineering', 'Civil Engineering', 'Other Engineering Branches'] },
+      { title: 'Academic disciplines', topics: ['Degree Subjects', 'Science', 'Commerce', 'Computer Applications', 'Management', 'Other Academic Disciplines'] },
+    ] },
+    { id: 'aptitude', title: 'Aptitude and Reasoning', description: 'Build problem-solving skills for study, exams, interviews, and everyday challenges.', levels: ['school', 'intermediate', 'college', 'competitive', 'career'], groups: [
+      { title: 'Numbers and data', topics: ['Quantitative Aptitude', 'Numerical Ability', 'Data Interpretation'] },
+      { title: 'Reasoning', topics: ['Logical Reasoning', 'Non-Verbal Reasoning', 'Analytical Thinking', 'Puzzles', 'Critical Thinking'] },
+      { title: 'Language', topics: ['Verbal Ability'] },
+    ] },
+    { id: 'technology', title: 'Programming and Technologies', description: 'Explore programming, software foundations, data, cloud, security, and emerging fields.', levels: ['college', 'technology', 'career'], groups: [
+      { title: 'Programming', topics: ['C', 'C++', 'Java', 'Python', 'JavaScript'] },
+      { title: 'Web Development', topics: ['HTML', 'CSS', 'JavaScript', 'React', 'Node.js', 'Backend Development', 'Full-Stack Development'] },
+      { title: 'Databases', topics: ['SQL', 'MySQL', 'PostgreSQL', 'MongoDB'] },
+      { title: 'Computer Science', topics: ['Data Structures and Algorithms', 'DBMS', 'Operating Systems', 'Computer Networks', 'OOP', 'Software Engineering', 'Computer Architecture'] },
+      { title: 'Emerging Technologies', topics: ['Artificial Intelligence', 'Machine Learning', 'Generative AI', 'Large Language Models', 'Cloud Computing', 'Cybersecurity', 'DevOps', 'Data Science', 'Internet of Things'] },
+      { title: 'Software Testing', topics: ['Manual Testing', 'Automation Testing', 'API Testing', 'Selenium', 'Testing Fundamentals'] },
+    ] },
+    { id: 'career', title: 'Placements and Career Preparation', description: 'Prepare for campus hiring and professional conversations with topic-led practice.', levels: ['career'], groups: [
+      { title: 'Placement rounds', topics: ['Campus Placement Preparation', 'Company-specific Practice', 'Aptitude Rounds', 'Coding Interviews', 'Technical Interviews'] },
+      { title: 'Professional readiness', topics: ['HR Interviews', 'Resume and Career Knowledge', 'Group Discussion', 'Communication Skills'] },
+    ] },
+    { id: 'general', title: 'General Learning', description: 'Explore broad knowledge and practical skills for lifelong learning.', levels: ['children', 'school', 'intermediate', 'college', 'competitive', 'technology', 'career', 'general'], groups: [
+      { title: 'Knowledge and society', topics: ['General Knowledge', 'Current Affairs', 'Science and Technology', 'History', 'Geography', 'Indian Polity', 'Economics', 'Business and Finance'] },
+      { title: 'Language and digital skills', topics: ['English Grammar', 'Vocabulary', 'Communication Skills', 'Digital Literacy'] },
+    ] },
+  ];
   function readPreferences() {
     try {
       const raw = JSON.parse(localStorage.getItem(PREFERENCE_KEY) || 'null');
@@ -28,11 +80,27 @@
     screen: 'home',
     view: 'play',
     selectedMode: 'classic',
+    resultsTab: 'results',
+    reviewFilter: 'all',
     preferences: readPreferences(),
     categories: [],
     publicQuizzes: [],
     ownedQuizzes: [],
     examCollections: [],
+    examCollectionsLoaded: false,
+    selectedExamCollectionId: '',
+    examHubLevel: '',
+    examHubDifficulty: '',
+    examHubQuery: '',
+    examHubCategoryId: '',
+    examHubTopic: '',
+    examHubQuizzes: [],
+    examHubQuizStatus: 'idle',
+    examHubCategoriesLoaded: false,
+    examHubLoadStarted: false,
+    examHubPracticeQuizId: '',
+    examHubPracticeCategoryId: '',
+    examHubPracticeDifficulty: '',
     soloReplayPending: false,
     reconnectDelay: 800,
     reconnectTimer: null,
@@ -275,6 +343,10 @@
         return;
       }
       if (message.state) {
+        if (state.room && state.room.phase !== message.state.phase && message.state.phase !== 'results') {
+          state.resultsTab = 'results';
+          state.reviewFilter = 'all';
+        }
         state.room = message.state;
         state.clockOffsetMs = Number(state.room.server_now || Date.now()) - Date.now();
         render();
@@ -308,7 +380,134 @@
     return `<div class="player-row"><div class="avatar" aria-hidden="true">${escapeHtml(initials(player.name))}</div><div class="player-info"><div class="player-name">${escapeHtml(player.name)}${player.id === state.playerId ? ' <span style="color:#a99aff">(you)</span>' : ''}</div><div class="player-state"><span class="mini-dot ${player.connected ? '' : 'offline'}"></span>${player.connected ? 'In the arena' : 'Reconnecting'}</div></div>${player.is_host ? '<span class="host-badge">HOST</span>' : ''}</div>`;
   }
   function home() {
-    return `<section class="home-layout"><div class="hero-copy"><div class="eyebrow">A little knowledge. A lot of rivalry.</div><h1 class="hero-title">Bring your<br><span class="gradient-text">brain trust.</span></h1><p class="hero-copy">Ten quick-fire questions. Your favorite people. One gloriously debatable winner. Your next great game night starts here.</p><div class="format-row"><span class="format-pill"><b>02—08</b> players</span><span class="format-pill"><b>10</b> rounds</span><span class="format-pill"><b>15s</b> to answer</span></div><div class="hero-art" aria-hidden="true"><div class="orbit"><span class="orbit-point one"></span><span class="orbit-point two"></span></div><div class="core-orb"></div><div class="art-label"><strong>QUICK THINKERS</strong>Fast questions, big reactions</div><div class="art-label bottom"><strong>YOUR CREW, YOUR ARENA</strong>Just share a six-character code</div></div></div><section class="play-card" aria-labelledby="play-title"><div class="play-card-head"><div><div class="section-kicker">STEP INTO THE VERSE</div><h2 id="play-title">Ready when you are.</h2><p class="subcopy">Pick a name. Create an arena or join your crew.</p></div><span class="card-spark" aria-hidden="true">✦</span></div><label class="form-label" for="player-name">Your nickname</label><input class="field" id="player-name" name="nickname" maxlength="18" autocomplete="nickname" placeholder="What should we call you?" value="${escapeHtml(state.name)}"><div class="error-text" id="name-error"></div><div class="action-grid"><button class="btn btn-primary" type="button" data-action="create">✦ &nbsp;Create Arena</button><button class="btn btn-secondary" type="button" data-action="join">Join with Code &nbsp;↗</button></div><div id="join-controls" hidden><label class="form-label" for="room-code">Six-character arena code</label><input class="field code-field" id="room-code" maxlength="6" autocomplete="off" placeholder="ABC234" aria-label="Six-character arena code"><button class="btn btn-primary btn-full" type="button" data-action="confirm-join">Join the arena&nbsp; →</button></div><p class="microcopy">No account. No downloads. Just a code and a little friendly rivalry.</p></section></section>`;
+    return `<div class="home-page">
+      <section class="home-layout" aria-labelledby="home-title">
+        <div class="hero-copy">
+          <div class="eyebrow">THE MULTIPLAYER EXAM PREPARATION UNIVERSE</div>
+          <h1 class="hero-title" id="home-title">Prepare Smarter.<br><span class="gradient-text">Compete Harder.<br>Grow Faster.</span></h1>
+          <p class="hero-copy hero-deck">Turn focused practice into a shared challenge. Explore exam topics, play solo, or bring your team into the arena.</p>
+          <div class="hero-actions"><button class="btn btn-primary" type="button" data-action="start-playing">Start playing <span aria-hidden="true">↗</span></button><button class="btn btn-quiet" type="button" data-action="open-exam-hub">Explore exam prep</button></div>
+          <div class="format-row"><span class="format-pill"><b>9</b> game modes</span><span class="format-pill"><b>Solo</b> practice</span><span class="format-pill"><b>Live</b> multiplayer</span></div>
+          <div class="hero-art" aria-hidden="true"><div class="orbit"><span class="orbit-point one"></span><span class="orbit-point two"></span></div><div class="core-orb"></div><div class="art-label"><strong>PLAY. LEARN. GROW.</strong>One arena for your next step</div><div class="art-label bottom"><strong>YOUR CREW, YOUR ARENA</strong>Join with a six-character code</div></div>
+        </div>
+        <section class="play-card" id="play-card" aria-labelledby="play-title"><div class="play-card-head"><div><div class="section-kicker">YOUR NEXT SESSION</div><h2 id="play-title">Step into the arena.</h2><p class="subcopy">Choose a format, set your preferences, then play.</p></div><span class="card-spark" aria-hidden="true">✦</span></div><label class="form-label" for="player-name">Player name</label><input class="field" id="player-name" name="nickname" maxlength="18" autocomplete="nickname" placeholder="Enter a nickname" value="${escapeHtml(state.name)}"><div class="error-text" id="name-error"></div><div class="action-grid"><button class="btn btn-primary" type="button" data-action="create">✦ &nbsp;Create Arena</button><button class="btn btn-secondary" type="button" data-action="join">Join with Code &nbsp;↗</button></div><div id="join-controls" hidden><label class="form-label" for="room-code">Six-character arena code</label><input class="field code-field" id="room-code" maxlength="6" autocomplete="off" placeholder="ABC234" aria-label="Six-character arena code"><button class="btn btn-primary btn-full" type="button" data-action="confirm-join">Join the arena&nbsp; →</button></div><p class="microcopy home-mode-copy">Solo practice or a shared match—start when you’re ready.</p></section>
+      </section>
+      <section class="home-discovery" aria-labelledby="home-exams-title"><div class="section-heading-row"><div><p class="section-kicker">CHOOSE YOUR DIRECTION</p><h2 id="home-exams-title">Exam preparation, made playable.</h2><p>Explore curated tracks and start a focused practice session.</p></div><button class="text-link" type="button" data-action="open-exam-hub">Browse Exam Hub <span aria-hidden="true">→</span></button></div><div class="exam-card-grid" id="home-exam-collections">${examCollectionCards(true)}</div></section>
+      <section class="home-pillars" aria-label="Explore QuizVerse"><article class="pillar-card pillar-card-arena"><span class="pillar-icon" aria-hidden="true">✦</span><p class="section-kicker">MULTIPLAYER ARENA</p><h2>Practice together. Compete in real time.</h2><p>Create a room, choose from the existing game modes, and invite your crew with a code.</p><button type="button" class="text-link" data-action="start-playing">Enter the arena →</button></article><article class="pillar-card"><span class="pillar-icon" aria-hidden="true">⌘</span><p class="section-kicker">AI LEARNING</p><h2>Find your next learning step.</h2><p>Explore the available performance insights, learning paths, and recommendations.</p><button type="button" class="text-link" data-action="open-intelligence">Explore AI Intelligence →</button></article><article class="pillar-card"><span class="pillar-icon" aria-hidden="true">♜</span><p class="section-kicker">COMPETITIVE GROWTH</p><h2>Track progress over time.</h2><p>Visit rankings, tournaments, and leagues to see the competitive features available.</p><button type="button" class="text-link" data-action="open-compete">Explore competition →</button></article></section>
+    </div>`;
+  }
+
+  function examCollectionCards(featured = false) {
+    const items = state.examCollections || [];
+    if (!state.examCollectionsLoaded) return '<div class="exam-empty-state" role="status">Loading exam tracks…</div>';
+    if (!items.length) return '<div class="exam-empty-state" role="status"><strong>Exam tracks are not available right now.</strong><span>Choose a subject in Arena setup or check back later.</span></div>';
+    return (featured ? items.slice(0, 3) : items).map(item => `<article class="exam-card"><div class="exam-card-mark" aria-hidden="true">${escapeHtml((item.display_name || 'Q').slice(0, 1).toUpperCase())}</div><div class="exam-card-copy"><h3>${escapeHtml(item.display_name)}</h3><p>${escapeHtml(item.description || 'Curated practice themes')}</p></div><button class="btn btn-secondary exam-card-action" type="button" data-action="select-exam-practice" data-exam-id="${escapeHtml(item.id)}">Practice this track</button></article>`).join('');
+  }
+
+  function examHubScreen() {
+    app.innerHTML = `<section class="hub-page exam-hub-page" aria-labelledby="exam-hub-title"><header class="hub-header exam-hub-heading"><p class="section-kicker">LEARN AT EVERY STAGE</p><h1 id="exam-hub-title">Explore Your Learning Journey</h1><p>From foundational knowledge to advanced career preparation, choose a path that fits what you want to learn next.</p></header><div class="exam-hub-controls" id="exam-hub-controls"><label class="exam-hub-search"><span class="sr-only">Search categories, subjects, topics, and exams</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg><input id="exam-hub-search" class="field" type="search" maxlength="100" value="${escapeHtml(state.examHubQuery)}" placeholder="Search subjects, exams, skills…" autocomplete="off"></label><label><span>Learning level</span><select id="exam-hub-level" class="field"><option value="">All learning paths</option>${EXAM_HUB_LEVELS.map(([value, label]) => `<option value="${value}" ${state.examHubLevel === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label><span>Difficulty</span><select id="exam-hub-difficulty" class="field"><option value="" ${!state.examHubDifficulty ? 'selected' : ''}>Any level</option><option value="easy" ${state.examHubDifficulty === 'easy' ? 'selected' : ''}>Beginner</option><option value="medium" ${state.examHubDifficulty === 'medium' ? 'selected' : ''}>Intermediate</option><option value="hard" ${state.examHubDifficulty === 'hard' ? 'selected' : ''}>Advanced</option></select></label></div><div id="exam-hub-dynamic" aria-live="polite"></div><section class="exam-hub-collections" aria-labelledby="exam-collections-title"><div class="section-heading-row"><div><p class="section-kicker">CURATED EXAM TRACKS</p><h2 id="exam-collections-title">Exam collections</h2><p>Tracks returned by QuizVerse’s active exam collection catalog.</p></div></div><div class="exam-card-grid exam-card-grid-full">${examCollectionCards()}</div></section><section class="hub-note exam-hub-practice-note"><div><p class="section-kicker">READY TO PRACTICE?</p><h2>Continue in the Arena.</h2><p>Use the existing Solo Practice flow with available question inventory or a published public quiz.</p></div><button type="button" class="btn btn-primary" data-action="start-playing">Open Solo Practice setup</button></section></section>`;
+    renderExamHubDynamic();
+    loadExamHubData();
+  }
+
+  function normalizeLearningText(value) {
+    return String(value || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+
+  function allExamHubTopics() {
+    return EXAM_HUB_CATALOG.flatMap(category => category.groups.flatMap(group => group.topics.map(topic => ({ category, group, topic }))));
+  }
+
+  function examHubCategoryMatches(category, query) {
+    if (!query) return true;
+    const term = normalizeLearningText(query);
+    return normalizeLearningText([category.title, category.description, ...category.groups.flatMap(group => [group.title, ...group.topics])].join(' ')).includes(term);
+  }
+
+  function examHubQuizMatches() {
+    const topic = normalizeLearningText(state.examHubTopic);
+    const topicTail = normalizeLearningText(state.examHubTopic.split('·').pop());
+    const query = normalizeLearningText(state.examHubQuery);
+    return state.examHubQuizzes.filter(quiz => {
+      if (state.examHubDifficulty && quiz.difficulty !== state.examHubDifficulty) return false;
+      const searchable = normalizeLearningText([quiz.title, quiz.description, quiz.category, ...(quiz.questions || []).map(question => question.category)].join(' '));
+      return (!topic || searchable.includes(topic) || (topicTail && searchable.includes(topicTail))) && (!query || searchable.includes(query));
+    });
+  }
+
+  function taxonomyCategoryForTopic(topic) {
+    const wanted = normalizeLearningText(topic);
+    if (!wanted) return null;
+    return state.categories.find(category => normalizeLearningText(category.display_name) === wanted || normalizeLearningText(category.slug) === wanted) || null;
+  }
+
+  function loadExamHubData() {
+    if (state.examHubLoadStarted) return;
+    state.examHubLoadStarted = true;
+    if (!state.examCollectionsLoaded) {
+      QuizVerseAPI.fetch('/api/exam-collections').then(response => response.ok ? response.json() : Promise.reject(new Error('Exam collections unavailable'))).then(items => {
+        state.examCollections = items; state.examCollectionsLoaded = true;
+        if (state.view === 'exam-hub') { render(); }
+      }).catch(() => {
+        state.examCollections = []; state.examCollectionsLoaded = true;
+        if (state.view === 'exam-hub') render();
+      });
+    }
+    state.examHubQuizStatus = 'loading';
+    const requests = [
+      QuizVerseAPI.fetch('/api/quizzes?limit=100').then(response => response.ok ? response.json() : Promise.reject(new Error('Public quiz library unavailable'))),
+      state.examHubCategoriesLoaded ? Promise.resolve(null) : QuizVerseAPI.fetch('/api/categories').then(response => response.ok ? response.json() : Promise.reject(new Error('Learning categories unavailable'))),
+    ];
+    requests[0].then(data => {
+      state.examHubQuizzes = Array.isArray(data.quizzes) ? data.quizzes : [];
+      state.examHubQuizStatus = 'loaded';
+      if (state.view === 'exam-hub') renderExamHubDynamic();
+    }).catch(() => {
+      state.examHubQuizzes = []; state.examHubQuizStatus = 'error';
+      if (state.view === 'exam-hub') renderExamHubDynamic();
+    });
+    requests[1].then(tree => {
+      if (!tree) return;
+      const flatten = nodes => nodes.flatMap(node => [{ id: node.id, slug: node.slug, display_name: node.display_name }, ...flatten(node.children || [])]);
+      state.categories = flatten(tree); state.examHubCategoriesLoaded = true;
+    }).catch(() => { state.examHubCategoriesLoaded = true; });
+  }
+
+  function renderExamHubDynamic() {
+    const target = app.querySelector('#exam-hub-dynamic');
+    if (!target) return;
+    const selectedCategory = EXAM_HUB_CATALOG.find(category => category.id === state.examHubCategoryId) || null;
+    const levelMatches = category => !state.examHubLevel || category.levels.includes(state.examHubLevel);
+    const queryMatches = category => examHubCategoryMatches(category, state.examHubQuery);
+    const categories = EXAM_HUB_CATALOG.filter(category => levelMatches(category) && queryMatches(category));
+    const topicMatches = state.examHubQuery ? allExamHubTopics().filter(item => (!state.examHubLevel || item.category.levels.includes(state.examHubLevel)) && (!selectedCategory || item.category.id === selectedCategory.id) && normalizeLearningText(`${item.category.title} ${item.group.title} ${item.topic}`).includes(normalizeLearningText(state.examHubQuery))).slice(0, 12) : [];
+    const topicResults = topicMatches.length ? `<section class="exam-hub-topic-results" aria-labelledby="topic-results-title"><div class="section-heading-row"><div><p class="section-kicker">MATCHING PATHS</p><h2 id="topic-results-title">Topics and exams</h2></div></div><div class="exam-hub-topic-chips">${topicMatches.map(item => `<button class="exam-hub-topic-chip" type="button" data-action="exam-hub-select-topic" data-category-id="${item.category.id}" data-topic="${escapeHtml(item.topic)}"><span>${escapeHtml(item.topic)}</span><small>${escapeHtml(item.category.title)} · ${escapeHtml(item.group.title)}</small></button>`).join('')}</div></section>` : '';
+    const categoryCards = categories.map(category => {
+      const topicCount = category.groups.reduce((total, group) => total + group.topics.length, 0);
+      return `<article class="learning-category-card learning-category-${category.id}"><div class="learning-category-icon" aria-hidden="true">${escapeHtml(category.title.slice(0, 1))}</div><p class="section-kicker">${category.levels.map(level => EXAM_HUB_LEVELS.find(item => item[0] === level)?.[1] || level).slice(0, 2).join(' · ')}</p><h2>${escapeHtml(category.title)}</h2><p>${escapeHtml(category.description)}</p><span class="learning-topic-count">${topicCount} learning topics</span><button class="btn btn-secondary" type="button" data-action="exam-hub-open-category" data-category-id="${category.id}">Explore this path <span aria-hidden="true">→</span></button></article>`;
+    }).join('');
+    const categoryGrid = selectedCategory ? '' : `<section class="learning-category-grid" aria-label="Learning categories">${categoryCards || '<p class="exam-hub-empty" role="status">No learning paths match these filters. Choose All learning paths or clear your search.</p>'}</section>`;
+    const catalogPath = selectedCategory ? `<section class="exam-hub-path" aria-labelledby="selected-learning-path"><nav class="exam-hub-breadcrumb" aria-label="Learning path breadcrumb"><button type="button" data-action="exam-hub-home">All learning paths</button><span aria-hidden="true">›</span><span>${escapeHtml(selectedCategory.title)}</span></nav><header class="exam-hub-path-header"><p class="section-kicker">LEARNING PATH</p><h2 id="selected-learning-path" tabindex="-1">${escapeHtml(selectedCategory.title)}</h2><p>${escapeHtml(selectedCategory.description)}</p></header><div class="exam-hub-subcategories">${selectedCategory.groups.map((group, groupIndex) => {
+      const shownTopics = state.examHubQuery ? group.topics.filter(topic => normalizeLearningText(`${group.title} ${topic}`).includes(normalizeLearningText(state.examHubQuery))) : group.topics;
+      if (!shownTopics.length) return '';
+      return `<details class="exam-hub-subcategory" ${state.examHubQuery || groupIndex === 0 ? 'open' : ''}><summary><span>${escapeHtml(group.title)}</span><small>${shownTopics.length} ${shownTopics.length === 1 ? 'topic' : 'topics'}</small></summary><div class="exam-hub-subcategory-topics">${shownTopics.map(topic => `<button type="button" class="exam-hub-topic ${state.examHubTopic === topic ? 'selected' : ''}" data-action="exam-hub-select-topic" data-category-id="${selectedCategory.id}" data-topic="${escapeHtml(topic)}">${escapeHtml(topic)}<span aria-hidden="true">→</span></button>`).join('')}</div></details>`;
+    }).join('') || '<p class="exam-hub-empty" role="status">No topics in this path match your search.</p>'}</div></section>` : '';
+    let selectedTopicPanel = '';
+    if (selectedCategory && state.examHubTopic) {
+      const matches = examHubQuizMatches();
+      const taxonomyMatch = taxonomyCategoryForTopic(state.examHubTopic);
+      const quizContent = state.examHubQuizStatus === 'loading' ? '<p role="status" class="exam-hub-empty">Checking the published quiz library…</p>'
+        : state.examHubQuizStatus === 'error' ? '<div role="alert" class="exam-hub-empty"><strong>Published quizzes could not be loaded.</strong><span>Check your connection and retry, or browse the Quiz Library.</span><button type="button" class="btn btn-secondary" data-action="exam-hub-retry">Try again</button><button type="button" class="text-link" data-action="open-exam-hub-library">Browse Quiz Library →</button></div>'
+          : matches.length ? `<p class="exam-hub-result-count" role="status">${matches.length}${state.examHubQuizzes.length >= 100 ? '+' : ''} matching published ${matches.length === 1 ? 'quiz' : 'quizzes'} in the available library response.</p><div class="exam-hub-quiz-grid">${matches.map(quiz => `<article class="exam-hub-quiz-card"><p class="section-kicker">${escapeHtml(quiz.category || 'PUBLIC QUIZ')} · ${escapeHtml(quiz.difficulty || 'Difficulty not specified')}</p><h3>${escapeHtml(quiz.title)}</h3><p>${escapeHtml(quiz.description || 'Published public quiz')}</p><div class="exam-hub-quiz-meta"><span>${Number(quiz.questions?.length || 0)} questions</span><span>${escapeHtml(quiz.difficulty || 'Unrated')}</span></div><button type="button" class="btn btn-primary" data-action="exam-hub-practice-quiz" data-quiz-id="${escapeHtml(quiz.id)}" data-difficulty="${escapeHtml(quiz.difficulty || 'medium')}">Practice this quiz</button></article>`).join('')}</div>`
+            : `<div class="exam-hub-empty" role="status"><strong>No published public quizzes match “${escapeHtml(state.examHubTopic)}”${state.examHubDifficulty ? ` at ${state.examHubDifficulty === 'easy' ? 'Beginner' : state.examHubDifficulty === 'medium' ? 'Intermediate' : 'Advanced'} difficulty` : ''} yet.</strong><span>Try another topic or difficulty, or explore the Quiz Library. No question count is estimated.</span><button type="button" class="text-link" data-action="open-exam-hub-library">Browse Quiz Library →</button>${taxonomyMatch ? '<button type="button" class="btn btn-secondary" data-action="exam-hub-practice-topic" data-category-id="' + escapeHtml(taxonomyMatch.id) + '" data-difficulty="' + escapeHtml(state.examHubDifficulty) + '">Try Arena practice for this category</button>' : ''}</div>`;
+      selectedTopicPanel = `<section class="exam-hub-available" aria-labelledby="available-quizzes-title"><div class="section-heading-row"><div><p class="section-kicker">AVAILABLE CONTENT</p><h2 id="available-quizzes-title" tabindex="-1">${escapeHtml(state.examHubTopic)}</h2></div></div>${quizContent}</section>`;
+    }
+    const catalogStatus = state.examHubQuizStatus === 'error' ? '<p class="exam-hub-data-note" role="status">Published quiz availability is temporarily unavailable.</p>' : state.examHubQuizStatus === 'loaded' && state.examHubQuizzes.length >= 100 ? '<p class="exam-hub-data-note">The quiz library returns up to 100 public quizzes for this discovery view.</p>' : '';
+    target.innerHTML = `${catalogStatus}${topicResults}${categoryGrid}${catalogPath}${selectedTopicPanel}`;
+  }
+
+  function competeHubScreen() {
+    app.innerHTML = `<section class="hub-page compete-hub-page"><header class="hub-header"><p class="section-kicker">COMPETE</p><h1>Make progress visible.</h1><p>Explore persistent rankings, organized tournaments, and seasonal leagues.</p></header><div class="compete-card-grid"><article class="compete-card"><span class="pillar-icon" aria-hidden="true">♜</span><p class="section-kicker">RANKINGS</p><h2>See where you stand.</h2><p>Browse global and game-mode leaderboards.</p><button type="button" class="btn btn-primary" data-action="open-competition" data-destination="rankings">View rankings</button></article><article class="compete-card"><span class="pillar-icon" aria-hidden="true">✦</span><p class="section-kicker">TOURNAMENTS</p><h2>Follow the bracket.</h2><p>Explore tournaments and their match progress.</p><button type="button" class="btn btn-primary" data-action="open-competition" data-destination="tournaments">Explore tournaments</button></article><article class="compete-card"><span class="pillar-icon" aria-hidden="true">◷</span><p class="section-kicker">LEAGUES &amp; SEASONS</p><h2>Compete over a season.</h2><p>View league standings, fixtures, and season progress.</p><button type="button" class="btn btn-primary" data-action="open-competition" data-destination="leagues">Explore leagues</button></article></div></section>`;
   }
   function installModeSelector() {
     const actions = app.querySelector('.action-grid');
@@ -324,21 +523,32 @@
       host.innerHTML = `<fieldset><legend>Topic preferences</legend>${state.categories.map(c=>`<label class="topic-preference">${escapeHtml(c.display_name)}<select class="field" data-topic-id="${escapeHtml(c.id)}" aria-label="${escapeHtml(c.display_name)} preference">${[['increase','Increase'],['normal','Normal'],['decrease','Decrease'],['exclude','Exclude']].map(([v,l])=>`<option value="${v}" ${((state.preferences.topics[c.id]||'normal')===v)?'selected':''}>${l}</option>`).join('')}</select></label>`).join('')}</fieldset>`;
     };
     drawTopics();
-    if (!state.categories.length) QuizVerseAPI.fetch('/api/categories').then(r=>r.ok?r.json():[]).then(tree=>{const flatten=nodes=>nodes.flatMap(n=>[{id:n.id,display_name:n.display_name},...flatten(n.children||[])]);state.categories=flatten(tree);const validIds=new Set(state.categories.map(c=>c.id));state.preferences.topics=Object.fromEntries(Object.entries(state.preferences.topics).filter(([id])=>validIds.has(id)));try{localStorage.setItem(PREFERENCE_KEY,JSON.stringify(state.preferences));}catch{}drawTopics();picker.querySelector('#match-categories').innerHTML=state.categories.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)}</option>`).join('');}).catch(()=>{picker.querySelector('#player-topic-settings').innerHTML='<p class="microcopy">Topic choices could not be loaded.</p>';});
+    picker.querySelector('#match-categories').innerHTML = state.categories.map(category => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.display_name)}</option>`).join('');
+    if (!state.categories.length) QuizVerseAPI.fetch('/api/categories').then(r=>r.ok?r.json():[]).then(tree=>{const flatten=nodes=>nodes.flatMap(n=>[{id:n.id,slug:n.slug,display_name:n.display_name},...flatten(n.children||[])]);state.categories=flatten(tree);const validIds=new Set(state.categories.map(c=>c.id));state.preferences.topics=Object.fromEntries(Object.entries(state.preferences.topics).filter(([id])=>validIds.has(id)));try{localStorage.setItem(PREFERENCE_KEY,JSON.stringify(state.preferences));}catch{}drawTopics();picker.querySelector('#match-categories').innerHTML=state.categories.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.display_name)}</option>`).join('');if(state.examHubPracticeCategoryId){[...picker.querySelector('#match-categories').options].forEach(option=>{option.selected=option.value===state.examHubPracticeCategoryId;});}}).catch(()=>{picker.querySelector('#player-topic-settings').innerHTML='<p class="microcopy">Topic choices could not be loaded.</p>';});
     const fillQuizChoices = () => {
       const mode = select.value;
       const format = mode === 'bluff_master' ? 'open_ended' : mode === 'escape_room' ? 'puzzle' : 'multiple_choice';
       QuizVerseAPI.fetch(`/api/quizzes?limit=100&question_format=${format}`).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{
         state.publicQuizzes=data.quizzes||[];
         const selectQuizzes=picker.querySelector('#match-quiz');
-        const publicOptions=state.publicQuizzes.map(q=>new Option(q.title,q.id));
+        const publicQuizRows = [...state.publicQuizzes];
+        const selectedHubQuiz = state.examHubPracticeQuizId && state.examHubQuizzes.find(quiz => quiz.id === state.examHubPracticeQuizId);
+        if (selectedHubQuiz && !publicQuizRows.some(quiz => quiz.id === selectedHubQuiz.id)) publicQuizRows.push(selectedHubQuiz);
+        const publicOptions=publicQuizRows.map(q=>new Option(q.title,q.id));
         const ownedOptions=state.ownedQuizzes.filter(q=>q.status==='published' && q.questions.every(item=>item.format===format)).map(q=>new Option(`${q.title} · ${q.visibility}`,q.id));
         selectQuizzes.replaceChildren(...[...publicOptions,...ownedOptions.filter(owned=>!publicOptions.some(item=>item.value===owned.value))]);
+        if (state.examHubPracticeQuizId) {
+          picker.querySelector('#match-scope').value = 'selected_quizzes';
+          [...selectQuizzes.options].forEach(option => { option.selected = option.value === state.examHubPracticeQuizId; });
+          picker.querySelector('.quiz-source-picker').hidden = false;
+        }
       }).catch(()=>{});
     };
     const ownerCapability = sessionStorage.getItem('qv-owner-capability') || '';
     if (ownerCapability) QuizVerseAPI.fetch('/api/quizzes/mine',{headers:{Authorization:`Bearer ${ownerCapability}`}}).then(r=>r.ok?r.json():{quizzes:[]}).then(data=>{state.ownedQuizzes=(data.quizzes||[]).filter(q=>q.status==='published');fillQuizChoices();}).catch(()=>{});
-    QuizVerseAPI.fetch('/api/exam-collections').then(r=>r.ok?r.json():[]).then(items=>{state.examCollections=items;const exam=picker.querySelector('#match-exam');exam.innerHTML='<option value="">Any / not applicable</option>'+items.map(x=>`<option value="${escapeHtml(x.id)}">${escapeHtml(x.display_name)}</option>`).join('');}).catch(()=>{});
+    const fillExamCollections = items => { state.examCollections=items;state.examCollectionsLoaded=true;const exam=picker.querySelector('#match-exam');if(exam){exam.innerHTML='<option value="">Any / not applicable</option>'+items.map(x=>`<option value="${escapeHtml(x.id)}">${escapeHtml(x.display_name)}</option>`).join('');if(state.selectedExamCollectionId)exam.value=state.selectedExamCollectionId;}const cards=document.querySelector('#home-exam-collections');if(cards)cards.innerHTML=examCollectionCards(true);if(state.view==='exam-hub')render(); };
+    if(state.examCollectionsLoaded) fillExamCollections(state.examCollections);
+    else QuizVerseAPI.fetch('/api/exam-collections').then(r=>r.ok?r.json():[]).then(fillExamCollections).catch(()=>{state.examCollectionsLoaded=true;const cards=document.querySelector('#home-exam-collections');if(cards)cards.innerHTML='<div class="exam-empty-state" role="status">Exam tracks could not be loaded. You can still choose a subject in Arena setup.</div>';if(state.view==='exam-hub')render();});
     actions.before(picker);
     const select = picker.querySelector('#game-mode');
     const teamOption = document.createElement('option');
@@ -381,7 +591,7 @@
       if (timePill) timePill.textContent = ({speed_challenge:'10s',quiz_royale:'12s',bluff_master:'30s',escape_room:'15m'})[select.value] || '15s';
       const createButton = app.querySelector('[data-action="create"]');
       if (createButton) createButton.textContent = select.value === 'solo_practice' ? 'Create Solo Practice' : '✦  Create Arena';
-      const homeCopy = app.querySelector('.home-layout > .hero-copy > p');
+      const homeCopy = app.querySelector('.home-mode-copy');
       if (homeCopy) homeCopy.textContent = select.value === 'solo_practice'
         ? 'Ten questions, your own pace, and a score that is yours alone. Step into the arena whenever you are ready.'
         : select.value === 'bluff_master' ? 'Ten prompts. Anonymous bluffs. Try to fool your friends, then spot their fakes.'
@@ -405,6 +615,11 @@
     // Competitive defaults are independent from this browser's private preferences.
     picker.querySelector('#match-preset').value = 'teen_challenge';
     picker.querySelector('#match-difficulty').value = 'medium';
+    if (state.examHubPracticeQuizId) picker.querySelector('#match-scope').value = 'selected_quizzes';
+    picker.querySelector('.quiz-source-picker').hidden = !state.examHubPracticeQuizId;
+    if (state.examHubPracticeCategoryId && state.categories.length) {
+      [...picker.querySelector('#match-categories').options].forEach(option => { option.selected = option.value === state.examHubPracticeCategoryId; });
+    }
     const savePreferences = () => {
       state.preferences.learning_preset = picker.querySelector('#player-preset').value;
       state.preferences.difficulty = picker.querySelector('#player-difficulty').value;
@@ -540,7 +755,7 @@
       }
       const answerStatus = app.querySelector('.answer-status');
       if (answerStatus) answerStatus.textContent = room.answered ? 'Answer locked' : 'Your answer';
-      if (room.phase === 'results' && room.results?.practice_summary) renderSoloResults(room.results.practice_summary);
+      if (room.phase === 'results' && state.resultsTab === 'results' && room.results?.practice_summary) renderSoloResults(room.results.practice_summary);
     }
     if (speedMode) {
       app.querySelectorAll('.final-stat').forEach(stat => {
@@ -704,18 +919,521 @@
     const actionArea = countdown ? '<div class="waiting-note">Your team challenge starts in a moment.</div>' : puzzle ? `<div class="escape-progress"><strong>Room ${puzzle.room} · Puzzle ${puzzle.index+1} of 10</strong><span>${escape.solved_puzzles} puzzles solved</span></div><div class="escape-room-map">${progress}</div>${puzzle.hint?`<div class="hint-box" role="status"><strong>Team hint</strong><p>${escapeHtml(puzzle.hint)}</p></div>`:''}<label class="form-label" for="escape-answer">Team answer</label><input class="field" id="escape-answer" maxlength="200" autocomplete="off" placeholder="Enter your answer"><div class="escape-actions"><button class="btn btn-primary" type="button" data-action="escape-answer">Submit answer</button><button class="btn btn-secondary" type="button" data-action="escape-hint" ${escape.hints_remaining<=0||escape.hint_used?'disabled':''}>Use shared hint (${escape.hints_remaining} left)</button></div><p class="microcopy">One correct answer advances the shared team state. Wrong answers do not use hints.</p>` : '<div class="waiting-note">The team adventure is complete.</div>';
     return `<section class="game-layout escape-game-layout"><div class="quiz-card"><div class="quiz-head"><div class="quiz-tags"><span class="round-tag">ESCAPE ROOM</span><span class="category-tag">${escape.solved_puzzles||0} / 10 SOLVED</span></div>${phaseClock(room)}</div>${puzzle?`<h1 class="question-text">${escapeHtml(puzzle.prompt)}</h1>`:'<h1 class="question-text">Work together to unlock every room.</h1>'}${actionArea}</div><aside class="rules-card escape-team-card"><h3>Team adventurers</h3><div class="player-list">${room.players.map(playerRow).join('')}</div><div class="rule-line"><span>Rooms cleared</span><strong>${escape.completed_rooms||0} / 5</strong></div><div class="rule-line"><span>Shared hints</span><strong>${escape.hints_remaining ?? 3}</strong></div><p class="microcopy">Everyone sees the same puzzle, hint, timer, and progress.</p></aside></section>`;
   }
+  function reviewScreen(review) {
+    if (!review) return results();
+    const summary = review.summary || {};
+    const questions = review.questions || [];
+    const filter = state.reviewFilter || 'all';
+    const filteredQuestions = filter === 'all'
+      ? questions
+      : questions.filter(q => q.status === filter);
+    const hostControls = state.playerId === state.room.host_id
+      ? `<button class="btn btn-primary" type="button" data-action="rematch">${state.room.mode === 'escape_room' ? 'Play again' : 'Run it back ↻'}</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button>`
+      : '<div class="waiting-note-inline">The host can start another match.</div>';
+
+    const accuracyText = summary.accuracy_percent != null ? `${summary.accuracy_percent}%` : 'N/A';
+    const scoreText = summary.score != null ? `${summary.score.toLocaleString()} pts` : summary.mode === 'escape_room' ? `${summary.correct_answers || 0} / ${summary.total_questions || 10} Solved` : '—';
+    const isEscape = summary.mode === 'escape_room';
+    const isBluff = summary.mode === 'bluff_master';
+
+    return `<section class="review-screen" aria-labelledby="review-screen-title">
+      <div class="review-header">
+        <div class="review-header-left">
+          <button class="btn btn-secondary review-back-btn" type="button" data-action="back-to-results">← Back to Standings</button>
+          <button class="btn btn-secondary review-analysis-btn" type="button" data-action="toggle-analysis">Performance Analysis 📊</button>
+        </div>
+        <div class="review-header-actions">
+          ${hostControls}
+        </div>
+      </div>
+      <header class="review-summary-card">
+        <div class="section-kicker">POST-GAME PERFORMANCE</div>
+        <h2 id="review-screen-title">Question-by-Question Review</h2>
+        <p class="results-copy">Review your answers, verify correct solutions, and learn from available explanations.</p>
+        <div class="review-metrics-grid">
+          <div class="review-metric-box">
+            <span class="review-metric-label">Questions</span>
+            <strong class="review-metric-val">${summary.total_questions || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">${isEscape ? 'Solved' : 'Correct'}</span>
+            <strong class="review-metric-val metric-correct">${summary.correct_answers || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">Incorrect</span>
+            <strong class="review-metric-val metric-incorrect">${summary.incorrect_answers || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">Unanswered</span>
+            <strong class="review-metric-val metric-unanswered">${summary.unanswered_questions || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">Accuracy</span>
+            <strong class="review-metric-val metric-accuracy">${accuracyText}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">${isEscape ? 'Progress' : 'Score'}</span>
+            <strong class="review-metric-val">${scoreText}</strong>
+          </div>
+        </div>
+      </header>
+      <div class="review-toolbar">
+        <div class="review-filter-group" role="tablist" aria-label="Filter questions">
+          <button class="review-filter-pill ${filter === 'all' ? 'active' : ''}" type="button" data-action="filter-review" data-filter="all">All (${summary.total_questions || 0})</button>
+          <button class="review-filter-pill ${filter === 'correct' ? 'active' : ''}" type="button" data-action="filter-review" data-filter="correct">Correct (${summary.correct_answers || 0})</button>
+          <button class="review-filter-pill ${filter === 'incorrect' ? 'active' : ''}" type="button" data-action="filter-review" data-filter="incorrect">Incorrect (${summary.incorrect_answers || 0})</button>
+          <button class="review-filter-pill ${filter === 'unanswered' ? 'active' : ''}" type="button" data-action="filter-review" data-filter="unanswered">Unanswered (${summary.unanswered_questions || 0})</button>
+        </div>
+        <button class="btn btn-outline-sm" type="button" data-action="toggle-all-reviews">Expand All</button>
+      </div>
+      <div class="review-questions-list">
+        ${filteredQuestions.length === 0 ? `<div class="review-empty-filter"><p>No questions match the "${escapeHtml(filter)}" filter.</p></div>` : filteredQuestions.map((q, idx) => {
+          const statusIcon = q.status === 'correct' ? '✓' : q.status === 'incorrect' ? '✗' : '⌛';
+          const statusLabel = q.status === 'correct' ? 'Correct' : q.status === 'incorrect' ? 'Incorrect' : 'Unanswered';
+          const statusClass = `pill-${q.status}`;
+          const labels = ['A', 'B', 'C', 'D'];
+
+          let modeBadges = '';
+          if (q.team_id) {
+            const teamName = q.team_id === 'violet' ? 'Team Violet' : q.team_id === 'cyan' ? 'Team Cyan' : q.team_id;
+            modeBadges += `<span class="review-badge badge-team ${q.team_id === 'violet' ? 'team-violet' : 'team-cyan'}">Your Team: ${escapeHtml(teamName)}</span>`;
+          }
+          if (q.power_play) {
+            const pp = q.power_play;
+            const powers = [];
+            if (pp.fifty_fifty) powers.push('50:50');
+            if (pp.double_points) powers.push('Double Points');
+            if (pp.shield) powers.push('Shield');
+            if (powers.length) {
+              modeBadges += `<span class="review-badge badge-power">⚡ ${escapeHtml(powers.join(' + '))}</span>`;
+            }
+          }
+
+          let cardContent = '';
+          if (isEscape) {
+            const esc = q.escape || {};
+            cardContent = `
+              <div class="escape-review-detail">
+                <div class="escape-detail-row">
+                  <span class="detail-label">Puzzle Solution:</span>
+                  <code class="escape-solution-code">${escapeHtml(esc.unlock_code || esc.solution || q.correct_text || '')}</code>
+                </div>
+                <div class="escape-detail-row">
+                  <span class="detail-label">Shared Team Hint:</span>
+                  <span>${esc.hint ? `${escapeHtml(esc.hint)} <span class="badge-hint-tag ${esc.hint_used ? 'hint-used' : 'hint-unused'}">${esc.hint_used ? 'Hint used' : 'Hint not used'}</span>` : '<span class="text-muted">No hint provided</span>'}</span>
+                </div>
+                <div class="escape-detail-row">
+                  <span class="detail-label">Challenge Outcome:</span>
+                  <span>${esc.solved ? '<strong class="text-mint">✓ Solved by team</strong>' : '<span class="text-pink">⌛ Not solved (timer expired)</span>'}</span>
+                </div>
+              </div>
+            `;
+          } else if (isBluff) {
+            const blf = q.bluff || {};
+            cardContent = `
+              <div class="bluff-review-detail">
+                <div class="bluff-detail-row">
+                  <span class="detail-label">Your Submitted Bluff:</span>
+                  <strong class="bluff-fake-text">${escapeHtml(blf.submitted_bluff || '(No bluff submitted)')}</strong>
+                </div>
+                <div class="bluff-detail-row">
+                  <span class="detail-label">Players Fooled by Your Bluff:</span>
+                  <span>${blf.fooled_players && blf.fooled_players.length ? `<strong class="text-cyan">${escapeHtml(blf.fooled_players.join(', '))}</strong> (+${blf.fooled_players.length * 500} pts)` : '<span class="text-muted">None this round</span>'}</span>
+                </div>
+                <div class="bluff-detail-row">
+                  <span class="detail-label">Your Guess:</span>
+                  <span>${blf.voted_text ? `<strong class="${blf.voted_correct ? 'text-mint' : 'text-pink'}">${escapeHtml(blf.voted_text)}</strong> (${blf.voted_correct ? '✓ Truth' : '✗ Fooled by bluff'})` : '<span class="text-gold">No vote submitted (timed out)</span>'}</span>
+                </div>
+                <div class="bluff-detail-row">
+                  <span class="detail-label">The Real Truth:</span>
+                  <strong class="text-mint">${escapeHtml(q.correct_text || '')}</strong>
+                </div>
+                <div class="bluff-all-options">
+                  <span class="detail-label">All Submissions This Round:</span>
+                  <ul class="bluff-options-list">
+                    ${(blf.all_options || []).map(opt => `
+                      <li class="${opt.is_correct ? 'opt-is-truth' : ''} ${opt.is_yours ? 'opt-is-yours' : ''}">
+                        <span class="bluff-opt-text">${escapeHtml(opt.text)}</span>
+                        <span class="bluff-opt-author">(${escapeHtml(opt.author)}${opt.is_yours ? ' · <strong>Your bluff</strong>' : ''})</span>
+                        ${opt.is_correct ? '<span class="badge-truth">Truth</span>' : ''}
+                      </li>
+                    `).join('')}
+                  </ul>
+                </div>
+              </div>
+            `;
+          } else {
+            const options = q.options || [];
+            cardContent = `
+              ${q.eliminated_prior ? '<div class="review-callout callout-eliminated">You were eliminated prior to this round. No answer was submitted.</div>' : ''}
+              ${!q.eliminated_prior && q.status === 'unanswered' ? '<div class="review-callout callout-unanswered">No answer was submitted (timed out).</div>' : ''}
+              <div class="review-options-list" role="list">
+                ${options.map((optText, optIdx) => {
+                  const isCorrect = optIdx === q.correct_choice;
+                  const isSubmitted = optIdx === q.submitted_choice;
+                  const optClass = [
+                    'review-option-row',
+                    isCorrect ? 'is-correct' : '',
+                    isSubmitted ? 'is-submitted' : '',
+                    isSubmitted && !isCorrect ? 'is-wrong' : '',
+                  ].filter(Boolean).join(' ');
+                  const badge = (isCorrect && isSubmitted)
+                    ? '<span class="review-opt-badge badge-both">✓ Your Answer (Correct)</span>'
+                    : isCorrect
+                    ? '<span class="review-opt-badge badge-correct">✓ Correct Answer</span>'
+                    : isSubmitted
+                    ? '<span class="review-opt-badge badge-incorrect">✗ Your Answer</span>'
+                    : '';
+                  return `<div class="${optClass}" role="listitem">
+                    <span class="review-opt-letter">${labels[optIdx] || optIdx + 1}</span>
+                    <span class="review-opt-text">${escapeHtml(optText)}</span>
+                    ${badge}
+                  </div>`;
+                }).join('')}
+              </div>
+            `;
+          }
+
+          const explanationText = q.explanation && String(q.explanation).trim()
+            ? escapeHtml(q.explanation)
+            : 'Explanation is not available for this question yet.';
+
+          return `
+            <details class="review-question-card" ${idx === 0 ? 'open' : ''}>
+              <summary class="review-card-summary">
+                <div class="review-summary-left">
+                  <div class="review-tags-line">
+                    <span class="review-q-num">${isEscape ? `Room ${Math.floor((q.number - 1) / 2) + 1} · Puzzle ${q.number}` : `Question ${q.number}`}</span>
+                    <span class="review-cat-tag">${escapeHtml(q.category || 'General')}</span>
+                    ${modeBadges}
+                  </div>
+                  <h3 class="review-card-prompt-preview">${escapeHtml(q.prompt)}</h3>
+                </div>
+                <div class="review-summary-right">
+                  <span class="review-status-pill ${statusClass}">
+                    <span class="pill-icon" aria-hidden="true">${statusIcon}</span>
+                    <span>${statusLabel}</span>
+                  </span>
+                  <span class="review-chevron" aria-hidden="true">▾</span>
+                </div>
+              </summary>
+              <div class="review-card-body">
+                ${cardContent}
+                <div class="review-explanation-card">
+                  <div class="review-explanation-head">
+                    <span class="review-bulb-icon" aria-hidden="true">💡</span>
+                    <strong>Explanation</strong>
+                  </div>
+                  <p class="review-explanation-content">${explanationText}</p>
+                </div>
+              </div>
+            </details>
+          `;
+        }).join('')}
+      </div>
+      <div class="review-bottom-nav">
+        <div class="review-bottom-left">
+          <button class="btn btn-secondary" type="button" data-action="back-to-results">← Back to Standings</button>
+          <button class="btn btn-secondary" type="button" data-action="toggle-analysis">Performance Analysis 📊</button>
+        </div>
+        ${hostControls}
+      </div>
+    </section>`;
+  }
+
+  function performanceScreen(analysis) {
+    if (!analysis) return results();
+    const summary = analysis.summary || {};
+    const topics = analysis.topics || [];
+    const strengths = analysis.strengths || [];
+    const weaknesses = analysis.weaknesses || [];
+    const improving = analysis.improving || [];
+    const repeatedMistakes = analysis.repeated_mistakes || [];
+    const recommendations = analysis.recommendations || [];
+    const isEscape = summary.mode === 'escape_room';
+    const isBluff = summary.mode === 'bluff_master';
+    const isTeam = summary.mode === 'team_battle';
+
+    const hostControls = state.playerId === state.room.host_id
+      ? `<button class="btn btn-primary" type="button" data-action="rematch">${isEscape ? 'Play again' : 'Run it back ↻'}</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button>`
+      : '<div class="waiting-note-inline">The host can start another match.</div>';
+
+    const accuracyDisplay = summary.accuracy_percent != null ? `${summary.accuracy_percent}%` : 'N/A';
+    const scoreDisplay = summary.score != null ? `${summary.score.toLocaleString()} pts` : summary.completion_status || '—';
+
+    // Mode-specific banners
+    let modeBanner = '';
+    if (isTeam && analysis.team_details) {
+      const td = analysis.team_details;
+      const outcomeClass = td.team_outcome === 'victory' ? 'outcome-victory' : td.team_outcome === 'defeat' ? 'outcome-defeat' : 'outcome-draw';
+      modeBanner = `
+        <div class="perf-mode-banner team-banner ${outcomeClass}">
+          <div class="mode-banner-header">
+            <strong>${escapeHtml(td.team_name)}: ${td.team_score.toLocaleString()} pts (${td.team_outcome.toUpperCase()})</strong>
+            <span class="mode-banner-sub">${escapeHtml(td.opposing_team_name)}: ${td.opposing_team_score.toLocaleString()} pts</span>
+          </div>
+          <p class="mode-banner-note">Your individual contribution: <strong>${td.player_score.toLocaleString()} pts</strong>. Individual accuracy and topic metrics below reflect your personal answers, separated from team totals.</p>
+        </div>`;
+    } else if (isBluff && analysis.bluff_performance) {
+      const bp = analysis.bluff_performance;
+      modeBanner = `
+        <div class="perf-mode-banner bluff-banner">
+          <div class="mode-banner-header">
+            <strong>Bluff Master Strategy & Deception Breakdown</strong>
+          </div>
+          <div class="perf-stat-chips">
+            <span class="perf-stat-chip">🎭 Bluffs Created: <strong>${bp.bluffs_submitted}</strong></span>
+            <span class="perf-stat-chip">🎯 Opponents Fooled: <strong>${bp.fooled_players_count}</strong></span>
+            <span class="perf-stat-chip">👁️ Truths Detected: <strong>${bp.correct_truths_voted}</strong></span>
+            <span class="perf-stat-chip">🎪 Fooled by Decoys: <strong>${bp.fooled_votes_cast}</strong></span>
+          </div>
+          <p class="mode-banner-note">Honest limitation: Bluff Master measures deception strategy and voting psychology rather than knowledge proficiency. Multiple-choice topic accuracy does not apply.</p>
+        </div>`;
+    } else if (isEscape && analysis.escape_progress) {
+      const ep = analysis.escape_progress;
+      modeBanner = `
+        <div class="perf-mode-banner escape-banner">
+          <div class="mode-banner-header">
+            <strong>Escape Room Chamber Milestones</strong>
+          </div>
+          <div class="perf-stat-chips">
+            <span class="perf-stat-chip">🚪 Chambers Cleared: <strong>${ep.completed_rooms} / ${ep.total_rooms}</strong></span>
+            <span class="perf-stat-chip">🧩 Puzzles Solved: <strong>${ep.solved_puzzles} / ${ep.total_puzzles}</strong></span>
+            <span class="perf-stat-chip">💡 Hints Used: <strong>${ep.hints_used} (${ep.hints_remaining} left)</strong></span>
+            <span class="perf-stat-chip">⏱️ Elapsed Time: <strong>${Math.floor(ep.elapsed_seconds/60)}m ${ep.elapsed_seconds%60}s</strong></span>
+          </div>
+          <p class="mode-banner-note">Honest limitation: Escape Room evaluates cooperative team logic and code-breaking. Academic subject topic classification does not apply.</p>
+        </div>`;
+    } else if (analysis.elimination_details) {
+      const ed = analysis.elimination_details;
+      modeBanner = `
+        <div class="perf-mode-banner elim-banner">
+          <div class="mode-banner-header">
+            <strong>${ed.eliminated ? `Eliminated in Round ${ed.eliminated_round}` : 'Sole Survivor! Victory'}</strong>
+            <span class="mode-banner-sub">${ed.rounds_survived} rounds survived</span>
+          </div>
+          <p class="mode-banner-note">Questions after elimination are tracked separately and not counted as submitted incorrect answers.</p>
+        </div>`;
+    }
+
+    // Strengths section HTML
+    let strengthsHtml = '';
+    if (strengths.length > 0) {
+      strengthsHtml = strengths.map(t => `
+        <div class="perf-cluster-card strength-card">
+          <div class="cluster-card-head">
+            <span class="cluster-icon" aria-hidden="true">★</span>
+            <strong class="cluster-title">${escapeHtml(t.topic_name)}</strong>
+            <span class="cluster-acc text-mint">${t.accuracy_percent}%</span>
+          </div>
+          <p class="cluster-desc">${escapeHtml(t.reason)}</p>
+        </div>
+      `).join('');
+    } else {
+      strengthsHtml = `<p class="perf-empty-cluster">No topics reached the Strong threshold (≥75% accuracy with 2+ questions attempted) in this session.</p>`;
+    }
+
+    // Weaknesses section HTML
+    let weaknessesHtml = '';
+    if (weaknesses.length > 0) {
+      weaknessesHtml = weaknesses.map(t => `
+        <div class="perf-cluster-card weakness-card">
+          <div class="cluster-card-head">
+            <span class="cluster-icon" aria-hidden="true">▲</span>
+            <strong class="cluster-title">${escapeHtml(t.topic_name)}</strong>
+            <span class="cluster-acc text-pink">${t.accuracy_percent}%</span>
+          </div>
+          <p class="cluster-desc">${escapeHtml(t.reason)}</p>
+        </div>
+      `).join('');
+    } else {
+      weaknessesHtml = `<p class="perf-empty-cluster">No weak areas detected! All attempted topics met or exceeded benchmark accuracy.</p>`;
+    }
+
+    // Repeated mistakes HTML
+    let repeatedMistakesHtml = '';
+    if (repeatedMistakes.length > 0) {
+      repeatedMistakesHtml = `
+        <div class="perf-callout-mistakes">
+          <div class="mistakes-head">
+            <span class="mistakes-icon" aria-hidden="true">⚠️</span>
+            <strong>Repeated Mistakes Identified</strong>
+          </div>
+          <p class="mistakes-copy">The following topics had 2 or more missed questions during this match:</p>
+          <div class="mistakes-list">
+            ${repeatedMistakes.map(rm => `
+              <div class="mistake-item">
+                <div class="mistake-item-header">
+                  <strong>${escapeHtml(rm.topic_name)}:</strong>
+                  <span class="text-pink font-mono">${rm.mistake_count} missed questions</span>
+                </div>
+                <ul class="sub-missed-list">
+                  ${(rm.missed_questions || []).map(mq => `<li>Q${mq.number}: ${escapeHtml(mq.prompt)}</li>`).join('')}
+                </ul>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Topics list HTML
+    let topicsListHtml = '';
+    if (topics.length > 0) {
+      topicsListHtml = `
+        <section class="perf-section">
+          <div class="section-kicker">CURRICULUM BREAKDOWN</div>
+          <h3 class="perf-section-title">Topic-wise Performance</h3>
+          <div class="perf-topics-list">
+            ${topics.map(t => {
+              const badgeClass = t.classification === 'Strong' ? 'badge-strong'
+                : t.classification === 'Improving' ? 'badge-improving'
+                : t.classification === 'Needs Practice' ? 'badge-needs-practice'
+                : 'badge-insufficient';
+              const accColor = t.classification === 'Strong' ? 'text-mint'
+                : t.classification === 'Needs Practice' ? 'text-pink'
+                : t.classification === 'Improving' ? 'text-cyan'
+                : 'text-muted';
+              return `
+                <article class="perf-topic-card">
+                  <div class="perf-topic-header">
+                    <div class="perf-topic-info">
+                      <strong class="perf-topic-name">${escapeHtml(t.topic_name)}</strong>
+                      <span class="perf-topic-counts">${t.questions_attempted} attempted · ${t.correct_answers} correct · ${t.incorrect_answers} incorrect ${t.unanswered_questions ? `· ${t.unanswered_questions} unanswered` : ''}</span>
+                    </div>
+                    <div class="perf-topic-status">
+                      <span class="perf-accuracy-badge ${accColor}">${t.questions_attempted > 0 ? t.accuracy_percent + '%' : '0%'}</span>
+                      <span class="perf-class-badge ${badgeClass}">${t.classification}</span>
+                    </div>
+                  </div>
+                  <p class="perf-topic-reason">${escapeHtml(t.reason)}</p>
+                </article>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      `;
+    }
+
+    return `<section class="performance-screen" aria-labelledby="performance-screen-title">
+      <div class="review-header">
+        <div class="review-header-left">
+          <button class="btn btn-secondary review-back-btn" type="button" data-action="back-to-results">← Back to Standings</button>
+          <button class="btn btn-secondary" type="button" data-action="toggle-review">Review Answers 📝</button>
+        </div>
+        <div class="review-header-actions">
+          ${hostControls}
+        </div>
+      </div>
+      <header class="perf-summary-card">
+        <div class="section-kicker">LEARNER INTELLIGENCE & INSIGHTS</div>
+        <h2 id="performance-screen-title">Performance Analysis</h2>
+        <p class="results-copy">Evidence-based assessment of your accuracy, topic mastery, and improvement areas based on actual game responses.</p>
+        <div class="perf-metrics-grid">
+          <div class="review-metric-box">
+            <span class="review-metric-label">Attempted</span>
+            <strong class="review-metric-val">${summary.questions_attempted || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">Accuracy</span>
+            <strong class="review-metric-val metric-accuracy">${accuracyDisplay}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">${isEscape ? 'Solved' : 'Correct'}</span>
+            <strong class="review-metric-val metric-correct">${summary.correct_answers || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">Incorrect</span>
+            <strong class="review-metric-val metric-incorrect">${summary.incorrect_answers || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">Unanswered</span>
+            <strong class="review-metric-val metric-unanswered">${summary.unanswered_questions || 0}</strong>
+          </div>
+          <div class="review-metric-box">
+            <span class="review-metric-label">${isEscape ? 'Milestones' : 'Total Score'}</span>
+            <strong class="review-metric-val">${scoreDisplay}</strong>
+          </div>
+        </div>
+        <div class="perf-formula-box">
+          <span class="formula-icon" aria-hidden="true">ℹ️</span>
+          <p class="formula-text"><strong>Calculation:</strong> Overall accuracy is calculated as <code>(${summary.correct_answers || 0} correct / ${summary.questions_attempted || 0} attempted) × 100</code>. Unanswered and timed-out questions (${summary.unanswered_questions || 0}) are reported separately and do not penalize answered accuracy.</p>
+        </div>
+      </header>
+
+      ${modeBanner}
+
+      ${topics.length > 0 ? `
+        <div class="perf-clusters-grid">
+          <div class="perf-cluster-column">
+            <div class="cluster-column-head">
+              <span class="cluster-head-icon text-mint">★</span>
+              <h3>Strengths</h3>
+            </div>
+            ${strengthsHtml}
+          </div>
+          <div class="perf-cluster-column">
+            <div class="cluster-column-head">
+              <span class="cluster-head-icon text-pink">▲</span>
+              <h3>Areas Needing Practice</h3>
+            </div>
+            ${weaknessesHtml}
+          </div>
+        </div>
+      ` : ''}
+
+      ${repeatedMistakesHtml}
+
+      ${topicsListHtml}
+
+      ${recommendations.length > 0 ? `
+        <section class="perf-section">
+          <div class="section-kicker">ACTIONABLE INSIGHTS</div>
+          <h3 class="perf-section-title">Evidence-Based Recommendations</h3>
+          <ul class="perf-recommendations-list">
+            ${recommendations.map(r => `<li><span class="rec-icon" aria-hidden="true">💡</span><span>${escapeHtml(r)}</span></li>`).join('')}
+          </ul>
+        </section>
+      ` : ''}
+
+      <div class="perf-historical-card">
+        <span class="hist-icon" aria-hidden="true">📊</span>
+        <div class="hist-content">
+          <strong>Historical Progress Tracking</strong>
+          <p>${escapeHtml(analysis.historical_context?.note || 'Historical trend tracking requires an authenticated profile with 2+ completed matches.')}</p>
+        </div>
+      </div>
+
+      <div class="review-bottom-nav">
+        <div class="review-bottom-left">
+          <button class="btn btn-secondary" type="button" data-action="back-to-results">← Back to Standings</button>
+          <button class="btn btn-secondary" type="button" data-action="toggle-review">Review Answers 📝</button>
+        </div>
+        ${hostControls}
+      </div>
+    </section>`;
+  }
+
   function results() {
+    const reviewData = state.room?.review || state.room?.results?.review;
+    const analysisData = state.room?.performance_analysis || state.room?.results?.performance_analysis;
+    if (state.resultsTab === 'review' && reviewData) {
+      return reviewScreen(reviewData);
+    }
+    if (state.resultsTab === 'analysis' && analysisData) {
+      return performanceScreen(analysisData);
+    }
     const players = ranking();
     if (state.room.mode === 'escape_room') {
       const result = state.room.results || {};
       const victory = result.outcome === 'victory';
-      return `<section class="results-card escape-results"><div class="winner-crown" aria-hidden="true">${victory?'✦':'⌛'}</div><div class="section-kicker">ESCAPE ROOM RESULTS</div><h2>${victory?'The team escaped!':'Time ran out.'}</h2><p class="results-copy">${result.team_outcome==='victory'?'Your team unlocked all five rooms.':'The team reached the end of the shared timer.'}</p><div class="escape-result-grid"><article><span>Rooms completed</span><strong>${result.completed_rooms} / 5</strong></article><article><span>Puzzles solved</span><strong>${result.solved_puzzles} / 10</strong></article><article><span>Hints remaining</span><strong>${result.remaining_hints}</strong></article><article><span>Elapsed time</span><strong>${Math.floor(result.elapsed_seconds/60)}:${String(result.elapsed_seconds%60).padStart(2,'0')}</strong></article></div>${state.playerId===state.room.host_id?'<div class="results-actions"><button class="btn btn-primary" type="button" data-action="rematch">Play again</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button></div>':'<div class="waiting-note">The host can start another adventure.</div>'}</section>`;
+      return `<section class="results-card escape-results"><div class="winner-crown" aria-hidden="true">${victory?'✦':'⌛'}</div><div class="section-kicker">ESCAPE ROOM RESULTS</div><h2>${victory?'The team escaped!':'Time ran out.'}</h2><p class="results-copy">${result.team_outcome==='victory'?'Your team unlocked all five rooms.':'The team reached the end of the shared timer.'}</p><div class="escape-result-grid"><article><span>Rooms completed</span><strong>${result.completed_rooms} / 5</strong></article><article><span>Puzzles solved</span><strong>${result.solved_puzzles} / 10</strong></article><article><span>Hints remaining</span><strong>${result.remaining_hints}</strong></article><article><span>Elapsed time</span><strong>${Math.floor(result.elapsed_seconds/60)}:${String(result.elapsed_seconds%60).padStart(2,'0')}</strong></article></div><div class="results-actions">${reviewData ? '<button class="btn btn-secondary review-trigger-btn" type="button" data-action="toggle-review">Review Answers 📝</button>' : ''}${analysisData ? '<button class="btn btn-secondary analysis-trigger-btn" type="button" data-action="toggle-analysis">Performance Analysis 📊</button>' : ''}${state.playerId===state.room.host_id?'<button class="btn btn-primary" type="button" data-action="rematch">Play again</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button>':'<div class="waiting-note">The host can start another adventure.</div>'}</div></section>`;
     }
     const winner = players[0];
     const podium = players.slice(0, 3);
     const podiumOrder = podium.length === 3 ? [podium[1], podium[0], podium[2]] : podium;
     const momentumAwards = state.room.results?.momentum_adjustments || [];
-    return `<section class="results-card"><div class="winner-crown" aria-hidden="true">♛</div><div class="section-kicker" style="justify-content:center">TEN ROUNDS. ONE ARENA.</div><h2>${winner ? `${escapeHtml(winner.name)} takes the crown.` : 'The arena is yours.'}</h2><p class="results-copy">${winner ? `${winner.score.toLocaleString()} points · ${winner.correct} correct answers` : 'Thanks for playing together.'}</p><div class="podium" aria-label="Top players">${podiumOrder.map(player => { const place = players.indexOf(player) + 1; return `<div class="podium-place ${place === 1 ? 'first' : ''}"><div class="podium-medal">${['♛', '✧', '✦'][place - 1]}</div><div class="podium-name">${escapeHtml(player.name)}</div><div class="podium-score">${player.score.toLocaleString()}</div></div>`; }).join('')}</div><div class="final-list" aria-label="Final rankings">${players.map((player, index) => `<div class="final-row"><span class="rank ${index < 3 ? ['gold', 'silver', 'bronze'][index] : ''}">${index + 1}</span><span class="leader-name">${escapeHtml(player.name)}</span><span class="final-stat">${player.correct} correct · +${player.momentum_points} Momentum</span><strong class="leader-score">${player.score.toLocaleString()}</strong></div>`).join('')}</div>${momentumAwards.length ? `<p class="momentum-log">Momentum Shift awards: ${momentumAwards.map(adjustment => `${escapeHtml(adjustment.name)} +${adjustment.points} (round ${adjustment.round})`).join(' · ')}</p>` : '<p class="momentum-log">No Momentum Shift awards this match.</p>'}${state.playerId === state.room.host_id ? `<div class="results-actions"><button class="btn btn-primary" type="button" data-action="rematch">Run it back &nbsp;↻</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button></div>` : `<div class="waiting-note">The host can start a rematch whenever the crew is ready.</div>`}</section>`;
+    return `<section class="results-card"><div class="winner-crown" aria-hidden="true">♛</div><div class="section-kicker" style="justify-content:center">TEN ROUNDS. ONE ARENA.</div><h2>${winner ? `${escapeHtml(winner.name)} takes the crown.` : 'The arena is yours.'}</h2><p class="results-copy">${winner ? `${winner.score.toLocaleString()} points · ${winner.correct} correct answers` : 'Thanks for playing together.'}</p><div class="podium" aria-label="Top players">${podiumOrder.map(player => { const place = players.indexOf(player) + 1; return `<div class="podium-place ${place === 1 ? 'first' : ''}"><div class="podium-medal">${['♛', '✧', '✦'][place - 1]}</div><div class="podium-name">${escapeHtml(player.name)}</div><div class="podium-score">${player.score.toLocaleString()}</div></div>`; }).join('')}</div><div class="final-list" aria-label="Final rankings">${players.map((player, index) => `<div class="final-row"><span class="rank ${index < 3 ? ['gold', 'silver', 'bronze'][index] : ''}">${index + 1}</span><span class="leader-name">${escapeHtml(player.name)}</span><span class="final-stat">${player.correct} correct · +${player.momentum_points} Momentum</span><strong class="leader-score">${player.score.toLocaleString()}</strong></div>`).join('')}</div>${momentumAwards.length ? `<p class="momentum-log">Momentum Shift awards: ${momentumAwards.map(adjustment => `${escapeHtml(adjustment.name)} +${adjustment.points} (round ${adjustment.round})`).join(' · ')}</p>` : '<p class="momentum-log">No Momentum Shift awards this match.</p>'}<div class="results-actions">${reviewData ? '<button class="btn btn-secondary review-trigger-btn" type="button" data-action="toggle-review">Review Answers 📝</button>' : ''}${analysisData ? '<button class="btn btn-secondary analysis-trigger-btn" type="button" data-action="toggle-analysis">Performance Analysis 📊</button>' : ''}${state.playerId === state.room.host_id ? `<button class="btn btn-primary" type="button" data-action="rematch">Run it back &nbsp;↻</button><button class="btn btn-secondary" type="button" data-action="lobby">Return to lobby</button>` : `<div class="waiting-note">The host can start a rematch whenever the crew is ready.</div>`}</div></section>`;
   }
   function profileScreen() {
     app.classList.remove('library-shell');
@@ -5138,6 +5856,17 @@
 
   function render() {
     if (state.tick) clearInterval(state.tick);
+    app.classList.remove('home-shell');
+    if (state.view === 'exam-hub') {
+      app.classList.remove('library-shell');
+      examHubScreen();
+      return;
+    }
+    if (state.view === 'compete') {
+      app.classList.remove('library-shell');
+      competeHubScreen();
+      return;
+    }
     if (state.view === 'intelligence') {
       intelligenceScreen();
       return;
@@ -5177,6 +5906,7 @@
     app.classList.remove('library-shell');
     if (!state.room) {
       state.screen = 'home';
+      app.classList.add('home-shell');
       app.innerHTML = home();
       installModeSelector();
       return;
@@ -5235,6 +5965,88 @@
     if (!target) return;
     const action = target.dataset.action;
     if (action === 'modal-container') return;
+    if (action === 'start-playing') {
+      if (state.room) { notify('Leave your current arena before starting another session.'); return; }
+      if (state.view !== 'play') switchView('play');
+      document.querySelector('#play-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.querySelector('#player-name')?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === 'open-exam-hub') { switchView('exam-hub'); return; }
+    if (action === 'open-compete') { switchView('compete'); return; }
+    if (action === 'open-intelligence') { switchView('intelligence'); return; }
+    if (action === 'open-competition') {
+      const destination = target.dataset.destination;
+      if (['rankings', 'tournaments', 'leagues'].includes(destination)) switchView(destination);
+      return;
+    }
+    if (action === 'select-exam-practice') {
+      if (state.room) { notify('Leave your current arena before starting another session.'); return; }
+      state.selectedExamCollectionId = target.dataset.examId || '';
+      state.examHubPracticeQuizId = '';
+      state.examHubPracticeCategoryId = '';
+      state.examHubPracticeDifficulty = '';
+      state.selectedMode = 'solo_practice';
+      switchView('play');
+      document.querySelector('#play-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.querySelector('#player-name')?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === 'exam-hub-open-category') {
+      state.examHubCategoryId = target.dataset.categoryId || '';
+      state.examHubTopic = '';
+      renderExamHubDynamic();
+      app.querySelector('#selected-learning-path')?.focus({ preventScroll: true });
+      app.querySelector('.exam-hub-path-header')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    if (action === 'exam-hub-select-topic') {
+      state.examHubCategoryId = target.dataset.categoryId || '';
+      state.examHubTopic = target.dataset.topic || '';
+      renderExamHubDynamic();
+      app.querySelector('#available-quizzes-title')?.focus({ preventScroll: true });
+      app.querySelector('#available-quizzes-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    if (action === 'exam-hub-home') {
+      state.examHubCategoryId = '';
+      state.examHubTopic = '';
+      renderExamHubDynamic();
+      app.querySelector('.learning-category-card .btn')?.focus({ preventScroll: true });
+      app.querySelector('.learning-category-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    if (action === 'exam-hub-practice-quiz') {
+      if (state.room) { notify('Leave your current arena before starting another session.'); return; }
+      state.examHubPracticeQuizId = target.dataset.quizId || '';
+      state.examHubPracticeCategoryId = '';
+      state.examHubPracticeDifficulty = target.dataset.difficulty || '';
+      state.selectedExamCollectionId = '';
+      state.selectedMode = 'solo_practice';
+      switchView('play');
+      document.querySelector('.competitive-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.querySelector('#player-name')?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === 'exam-hub-practice-topic') {
+      if (state.room) { notify('Leave your current arena before starting another session.'); return; }
+      state.examHubPracticeQuizId = '';
+      state.examHubPracticeCategoryId = target.dataset.categoryId || '';
+      state.examHubPracticeDifficulty = target.dataset.difficulty || '';
+      state.selectedExamCollectionId = '';
+      state.selectedMode = 'solo_practice';
+      switchView('play');
+      document.querySelector('#player-name')?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === 'open-exam-hub-library') { switchView('library'); return; }
+    if (action === 'exam-hub-retry') {
+      state.examHubLoadStarted = false;
+      state.examHubQuizStatus = 'loading';
+      renderExamHubDynamic();
+      loadExamHubData();
+      return;
+    }
     const nickname = document.querySelector('#player-name');
     if (nickname) {
       state.name = nickname.value.trim();
@@ -5404,23 +6216,26 @@
         if (identityTicket === false) return;
         const mode = document.querySelector('#game-mode')?.value || 'classic';
         const solo = mode === 'solo_practice';
-        const scope = document.querySelector('#match-scope')?.value || 'built_in';
-        const selectedQuizzes = [...(document.querySelector('#match-quiz')?.selectedOptions || [])].slice(0, 20).map(option => option.value);
+        const scope = state.examHubPracticeQuizId ? 'selected_quizzes' : document.querySelector('#match-scope')?.value || 'built_in';
+        const selectedQuizzes = state.examHubPracticeQuizId ? [state.examHubPracticeQuizId] : [...(document.querySelector('#match-quiz')?.selectedOptions || [])].slice(0, 20).map(option => option.value);
         const isPrivate = document.querySelector('#match-private')?.checked || false;
         send('create', {
           name: state.name, mode, ...(identityTicket ? { identity_ticket: identityTicket } : {}),
           access_policy: isPrivate ? 'invite_only' : 'public',
           question_count: Number(document.querySelector('#match-count')?.value || 10),
-          difficulty: solo ? state.preferences.difficulty : document.querySelector('#match-difficulty')?.value || 'medium',
+          difficulty: solo ? state.examHubPracticeDifficulty || state.preferences.difficulty : document.querySelector('#match-difficulty')?.value || 'medium',
           learning_preset: solo ? state.preferences.learning_preset : document.querySelector('#match-preset')?.value || 'teen_challenge',
           topic_preferences: solo ? state.preferences.topics : {},
           language: solo ? state.preferences.language : document.querySelector('#match-language')?.value || 'en',
-          categories: [...(document.querySelector('#match-categories')?.selectedOptions || [])].map(option => option.value),
+          categories: state.examHubPracticeCategoryId ? [state.examHubPracticeCategoryId] : [...(document.querySelector('#match-categories')?.selectedOptions || [])].map(option => option.value),
           content_scope: scope,
           quiz_ids: scope === 'selected_quizzes' ? selectedQuizzes : [],
           library_capability: scope === 'selected_quizzes' && selectedQuizzes.some(id=>state.ownedQuizzes.some(q=>q.id===id && q.visibility==='private')) ? (sessionStorage.getItem('qv-owner-capability') || undefined) : undefined,
           exam_collection_id: document.querySelector('#match-exam')?.value || null,
         });
+        state.examHubPracticeQuizId = '';
+        state.examHubPracticeCategoryId = '';
+        state.examHubPracticeDifficulty = '';
       }
       else {
         document.querySelector('#join-controls').hidden = false;
@@ -5454,12 +6269,51 @@
       send('escape_answer', { answer, puzzle_index: state.room.escape.current_puzzle.index, request_id: crypto.randomUUID() });
     }
     else if (action === 'escape-hint') send('escape_hint', { request_id: crypto.randomUUID() });
+    else if (action === 'toggle-review') {
+      state.resultsTab = 'review';
+      render();
+    }
+    else if (action === 'toggle-analysis') {
+      state.resultsTab = 'analysis';
+      render();
+    }
+    else if (action === 'back-to-results') {
+      state.resultsTab = 'results';
+      render();
+    }
+    else if (action === 'filter-review') {
+      state.reviewFilter = target.dataset.filter || 'all';
+      render();
+    }
+    else if (action === 'toggle-all-reviews') {
+      const cards = app.querySelectorAll('.review-question-card');
+      const anyClosed = Array.from(cards).some(card => !card.open);
+      cards.forEach(card => {
+        card.open = anyClosed;
+        if (anyClosed) {
+          card.setAttribute('open', '');
+        } else {
+          card.removeAttribute('open');
+        }
+      });
+      target.textContent = anyClosed ? 'Collapse All' : 'Expand All';
+    }
     else if (action === 'rematch') {
+      state.resultsTab = 'results';
+      state.reviewFilter = 'all';
       if (state.room?.mode === 'solo_practice') state.soloReplayPending = true;
       send('rematch');
     }
-    else if (action === 'lobby') send('lobby');
-    else if (action === 'leave') leave();
+    else if (action === 'lobby') {
+      state.resultsTab = 'results';
+      state.reviewFilter = 'all';
+      send('lobby');
+    }
+    else if (action === 'leave') {
+      state.resultsTab = 'results';
+      state.reviewFilter = 'all';
+      leave();
+    }
     else if (action === 'rankings-scope') {
       const scope = target.dataset.scope;
       if (scope === 'global') {
@@ -6843,6 +7697,15 @@
     }
   });
   app.addEventListener('input', event => {
+    if (event.target.id === 'exam-hub-search') {
+      if (state.examHubQuery !== event.target.value) {
+        state.examHubCategoryId = '';
+        state.examHubTopic = '';
+      }
+      state.examHubQuery = event.target.value;
+      renderExamHubDynamic();
+      return;
+    }
     if (event.target.id === 'dm-composer-input') {
       const val = event.target.value;
       state.messageDraft = val;
@@ -6876,6 +7739,14 @@
     }
   });
   app.addEventListener('change', event => {
+    if (event.target.id === 'exam-hub-level') {
+      state.examHubLevel = event.target.value;
+      renderExamHubDynamic();
+    }
+    if (event.target.id === 'exam-hub-difficulty') {
+      state.examHubDifficulty = event.target.value;
+      renderExamHubDynamic();
+    }
     if (event.target.id === 'rating-history-scope') {
       state.ratingHistoryScope = event.target.value;
       state.ratingHistoryPage = 0;
@@ -6963,8 +7834,13 @@
   }
 
   function setActiveNavigation() {
+    const activePillar = state.view === 'play' ? 'arena'
+      : state.view === 'exam-hub' ? 'exam'
+        : ['compete', 'rankings', 'tournaments', 'leagues'].includes(state.view) ? 'compete'
+          : state.view === 'intelligence' ? 'intelligence'
+            : state.view === 'profile' ? 'profile' : '';
     document.querySelectorAll('[data-view]').forEach(button => {
-      const active = button.dataset.view === state.view;
+      const active = button.dataset.pillar ? button.dataset.pillar === activePillar : button.dataset.view === state.view;
       button.classList.toggle('active', active);
       if (active) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
@@ -6982,6 +7858,15 @@
     if (mobileCloseTrigger) {
       event.preventDefault();
       closeMobileDrawer();
+      return;
+    }
+
+    const headerJoin = event.target.closest('[data-action="header-join"]');
+    if (headerJoin) {
+      event.preventDefault();
+      if (state.room) { notify('Leave your current arena before joining another.'); return; }
+      if (state.view !== 'play') switchView('play');
+      requestAnimationFrame(() => app.querySelector('[data-action="join"]')?.click());
       return;
     }
 
@@ -7181,6 +8066,14 @@
       const button = event.target.closest('[data-view]');
       if (!button) return;
       switchView(button.dataset.view);
+    });
+  }
+
+  const bottomNavigation = document.querySelector('#bottom-navigation');
+  if (bottomNavigation) {
+    bottomNavigation.addEventListener('click', event => {
+      const button = event.target.closest('[data-view]');
+      if (button) switchView(button.dataset.view);
     });
   }
 

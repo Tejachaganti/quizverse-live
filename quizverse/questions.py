@@ -22,6 +22,7 @@ class Question:
     exam_collection_ids: frozenset[str] = frozenset()
     provenance: str = "built_in_reviewed"
     format_payload: dict[str, object] | None = None
+    explanation: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -33,11 +34,11 @@ class Question:
 
 
 QUESTIONS: tuple[Question, ...] = (
-    Question("Science", "Which planet is known as the Red Planet?", ("Venus", "Mars", "Jupiter", "Mercury"), 1),
-    Question("Geography", "What is the capital city of Australia?", ("Sydney", "Perth", "Canberra", "Melbourne"), 2),
-    Question("Technology", "What does CPU stand for?", ("Central Processing Unit", "Computer Power Utility", "Core Program Unit", "Central Performance User"), 0),
-    Question("Nature", "Which is the largest mammal on Earth?", ("African elephant", "Blue whale", "Giraffe", "Orca"), 1),
-    Question("Space", "Which planet is famous for its prominent rings?", ("Neptune", "Earth", "Saturn", "Mars"), 2),
+    Question("Science", "Which planet is known as the Red Planet?", ("Venus", "Mars", "Jupiter", "Mercury"), 1, explanation="Mars is known as the Red Planet because iron minerals in its soil oxidize, or rust, giving it a reddish appearance."),
+    Question("Geography", "What is the capital city of Australia?", ("Sydney", "Perth", "Canberra", "Melbourne"), 2, explanation="Canberra was selected as the federal capital of Australia in 1908 as a compromise between Sydney and Melbourne."),
+    Question("Technology", "What does CPU stand for?", ("Central Processing Unit", "Computer Power Utility", "Core Program Unit", "Central Performance User"), 0, explanation="CPU stands for Central Processing Unit, the primary component that executes computer program instructions."),
+    Question("Nature", "Which is the largest mammal on Earth?", ("African elephant", "Blue whale", "Giraffe", "Orca"), 1, explanation="The blue whale is the largest known mammal and animal ever to have lived on Earth, reaching lengths of up to 30 meters."),
+    Question("Space", "Which planet is famous for its prominent rings?", ("Neptune", "Earth", "Saturn", "Mars"), 2, explanation="Saturn has the most extensive and visually prominent planetary ring system in the Solar System, composed primarily of water ice with a trace of rocky material."),
     Question("Literature", "Who wrote the play Romeo and Juliet?", ("Charles Dickens", "Jane Austen", "William Shakespeare", "Mark Twain"), 2),
     Question("Science", "What is the chemical symbol for gold?", ("Ag", "Gd", "Go", "Au"), 3),
     Question("Geography", "Which is the largest ocean on Earth?", ("Atlantic Ocean", "Indian Ocean", "Pacific Ocean", "Arctic Ocean"), 2),

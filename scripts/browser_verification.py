@@ -782,6 +782,8 @@ def run_bluff_master(browser, origin: str) -> None:
                 inp.fill(fake_answer)
                 expect(inp).to_have_value(fake_answer, timeout=5000)
                 page.locator('[data-action="bluff-submit"]').click()
+                if index < len(pages) - 1:
+                    expect(page.locator(".waiting-note")).to_be_visible(timeout=5000)
             for page in pages:
                 expect(page.locator("[data-action='bluff-vote']").first).to_be_visible(timeout=12000)
                 assert_no_horizontal_overflow(page)

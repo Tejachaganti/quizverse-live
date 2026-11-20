@@ -21,6 +21,8 @@ def test_static_build_injects_only_the_configured_api_origins(tmp_path: Path):
     assert "window.QuizVerseAPI" in config
     assert "https://quizverse-api.example.test" in html
     assert "wss://quizverse-api.example.test" in html
+    assert "https://fonts.googleapis.com" in html
+    assert "https://fonts.gstatic.com" in html
     assert (output / "app.js").is_file()
     assert (output / "quiz-library.js").is_file()
 

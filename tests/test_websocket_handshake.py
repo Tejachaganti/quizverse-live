@@ -228,6 +228,22 @@ def test_allow_connection_separate_buckets_per_peer():
 # ==============================================================================
 
 
+@pytest.fixture(autouse=True)
+def _ensure_loggers_enabled():
+    """Ensure loggers used in tests are enabled and not disabled by prior migration runs."""
+    realtime_logger = logging.getLogger("quizverse.realtime")
+    presence_logger = logging.getLogger("quizverse.presence_api")
+    realtime_disabled = realtime_logger.disabled
+    presence_disabled = presence_logger.disabled
+    realtime_logger.disabled = False
+    presence_logger.disabled = False
+    try:
+        yield
+    finally:
+        realtime_logger.disabled = realtime_disabled
+        presence_logger.disabled = presence_disabled
+
+
 def test_websocket_endpoint_logs_warning_on_origin_rejection(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

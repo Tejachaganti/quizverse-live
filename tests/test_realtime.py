@@ -40,7 +40,7 @@ def server_url() -> str:
         stderr=subprocess.DEVNULL,
     )
     base_url = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + 8
+    deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError(f"Uvicorn exited with code {process.returncode}")

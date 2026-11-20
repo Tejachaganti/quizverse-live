@@ -4,8 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#090a18">
-    <meta name="description" content="QuizVerse Live — fast, friendly trivia arenas for your crew.">
-    <title>QuizVerse Live — Bring your brain trust</title>
+    <meta name="description" content="QuizVerse — the multiplayer exam preparation universe. Play. Learn. Grow.">
+    <title>QuizVerse — Prepare Smarter. Compete Harder.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/details.css">
     <link rel="stylesheet" href="/quiz-library.css">
@@ -15,27 +18,24 @@
     <a href="#app" class="skip-link">Skip to main content</a>
     <div class="starfield" aria-hidden="true"></div>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="QuizVerse Live home">
+      <a class="brand" href="/" aria-label="QuizVerse home">
         <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><path d="m18 2 4.1 11.9L34 18l-11.9 4.1L18 34l-4.1-11.9L2 18l11.9-4.1L18 2Z"/><circle cx="28.5" cy="7.5" r="2.3"/></svg></span>
-        <span>QUIZVERSE <span class="brand-light">LIVE</span></span>
+        <span>QUIZVERSE <span class="brand-light">LEARN · COMPETE · GROW</span></span>
       </a>
       <nav class="primary-navigation" id="primary-navigation" aria-label="Main navigation">
-        <button class="nav-link active" type="button" data-view="play" aria-current="page">Play</button>
-        <button class="nav-link" type="button" data-view="intelligence">AI Intelligence</button>
-        <button class="nav-link" type="button" data-view="community">Community</button>
-        <button class="nav-link" type="button" data-view="social">Social</button>
-        <button class="nav-link" type="button" data-view="leagues">Leagues</button>
-        <button class="nav-link" type="button" data-view="tournaments">Tournaments</button>
-        <button class="nav-link" type="button" data-view="rankings">Rankings</button>
-        <button class="nav-link" type="button" data-view="library">Quiz Library</button>
-        <button class="nav-link" type="button" data-view="profile">Player Profile</button>
+        <button class="nav-link pillar-link active" type="button" data-view="play" data-pillar="arena" aria-current="page">Arena</button>
+        <button class="nav-link pillar-link" type="button" data-view="exam-hub" data-pillar="exam">Exam Hub</button>
+        <button class="nav-link pillar-link" type="button" data-view="compete" data-pillar="compete">Compete</button>
+        <button class="nav-link pillar-link" type="button" data-view="intelligence" data-pillar="intelligence">AI Intelligence</button>
+        <button class="nav-link pillar-link" type="button" data-view="profile" data-pillar="profile">Profile</button>
       </nav>
       <div class="header-actions">
+        <button class="header-join-btn" type="button" data-action="header-join">Join code</button>
         <button class="notif-bell-btn" id="notif-bell-btn" type="button" aria-label="Notifications" title="Notifications" data-action="toggle-notif-center">
-          <span class="bell-icon">🔔</span><span class="notif-badge" id="notif-bell-badge" style="display:none">0</span>
+          <span class="bell-icon" aria-hidden="true">♢</span><span class="notif-badge" id="notif-bell-badge" style="display:none">0</span>
         </button>
-        <button class="mobile-menu-btn" id="mobile-menu-btn" type="button" aria-label="Open navigation menu" aria-expanded="false" aria-controls="mobile-nav-drawer" data-action="toggle-mobile-menu">
-          <span class="menu-icon" aria-hidden="true">☰</span>
+        <button class="mobile-menu-btn" id="mobile-menu-btn" type="button" aria-label="Open more navigation" aria-expanded="false" aria-controls="mobile-nav-drawer" data-action="toggle-mobile-menu">
+          <span class="menu-icon" aria-hidden="true">···</span><span class="more-label">More</span>
         </button>
         <div class="connection-indicator" id="connection-status" role="status"><span class="status-dot"></span><span>CONNECTING</span></div>
       </div>
@@ -45,31 +45,41 @@
       <div class="mobile-drawer-header">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><path d="m18 2 4.1 11.9L34 18l-11.9 4.1L18 34l-4.1-11.9L2 18l11.9-4.1L18 2Z"/><circle cx="28.5" cy="7.5" r="2.3"/></svg></span>
-          <span>QUIZVERSE <span class="brand-light">LIVE</span></span>
+          <span>QUIZVERSE <span class="brand-light">PLAY · LEARN · GROW</span></span>
         </div>
         <button class="mobile-drawer-close" id="mobile-drawer-close" type="button" aria-label="Close navigation menu" data-action="close-mobile-menu">✕</button>
       </div>
-      <nav class="mobile-drawer-nav" aria-label="Mobile navigation">
-        <button class="nav-link mobile-nav-link active" type="button" data-view="play" aria-current="page">🎮 &nbsp;Play Arena</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="intelligence">🧠 &nbsp;AI Intelligence</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="community">🌐 &nbsp;Community</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="social">👥 &nbsp;Social Hub</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="leagues">🏆 &nbsp;Leagues</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="tournaments">⚔️ &nbsp;Tournaments</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="rankings">📊 &nbsp;Rankings</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="library">📚 &nbsp;Quiz Library</button>
-        <button class="nav-link mobile-nav-link" type="button" data-view="profile">👤 &nbsp;Player Profile</button>
+      <nav class="mobile-drawer-nav" aria-label="More QuizVerse destinations">
+        <span class="drawer-section-label">LEARNING &amp; COMMUNITY</span>
+        <button class="nav-link mobile-nav-link" type="button" data-view="community">Community &amp; creators</button>
+        <button class="nav-link mobile-nav-link" type="button" data-view="library">Quiz Library</button>
+        <span class="drawer-section-label">PEOPLE &amp; COMPETITION</span>
+        <button class="nav-link mobile-nav-link" type="button" data-view="social">Friends &amp; messages</button>
+        <button class="nav-link mobile-nav-link" type="button" data-view="rankings">Rankings</button>
+        <button class="nav-link mobile-nav-link" type="button" data-view="tournaments">Tournaments</button>
+        <button class="nav-link mobile-nav-link" type="button" data-view="leagues">Leagues</button>
+        <span class="drawer-section-label">YOUR ACCOUNT</span>
+        <button class="nav-link mobile-nav-link" type="button" data-view="profile">Player profile</button>
+        <button class="nav-link mobile-nav-link" type="button" data-view="intelligence">AI Intelligence</button>
+        <button class="nav-link mobile-nav-link" type="button" data-view="play">Arena</button>
       </nav>
       <div class="mobile-drawer-footer">
-        <p class="microcopy">QuizVerse Live · Competitive &amp; Learning Ecosystem</p>
+        <p class="microcopy">QuizVerse · Play. Learn. Grow.</p>
       </div>
     </aside>
+    <nav class="bottom-navigation" id="bottom-navigation" aria-label="Primary navigation">
+      <button type="button" data-view="play" data-pillar="arena" class="active" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg><span>Arena</span></button>
+      <button type="button" data-view="exam-hub" data-pillar="exam"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5h11a3 3 0 0 1 3 3v12H7a3 3 0 0 1-3-3v-12Zm0 12a3 3 0 0 1 3-3h11M8 8h6M8 11h6"/></svg><span>Exam Hub</span></button>
+      <button type="button" data-view="compete" data-pillar="compete"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h8v4a4 4 0 0 1-8 0V4Zm4 8v5m-4 3h8m-8-7H6a3 3 0 0 1-3-3V7h5m8 3h2a3 3 0 0 0 3-3V7h-5"/></svg><span>Compete</span></button>
+      <button type="button" aria-label="AI Intelligence" data-view="intelligence" data-pillar="intelligence"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5a3 3 0 0 0-3 3 3.5 3.5 0 0 0-1 6.7A3.2 3.2 0 0 0 8 19.5h4V4.5H9Zm6 0a3 3 0 0 1 3 3 3.5 3.5 0 0 1 1 6.7 3.2 3.2 0 0 1-3 5.3h-4V4.5h3Z"/></svg><span>AI Intel</span></button>
+      <button type="button" data-view="profile" data-pillar="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span>Profile</span></button>
+    </nav>
     <div id="notif-center-panel" class="notif-center-panel closed" aria-label="Notification Center" role="region"></div>
     <div id="notif-modal-container"></div>
     <main id="app" class="app-shell" aria-live="polite">
       <div class="loading-state"><span class="loader"></span><p>Opening your arena…</p></div>
     </main>
-    <footer class="footer"><span>Good questions. Great company.</span><span>2–8 players <i aria-hidden="true">·</i> No account needed</span></footer>
+    <footer class="footer"><span>QuizVerse · Play. Learn. Grow.</span><span>The Multiplayer Exam Preparation Universe</span></footer>
     <div id="toast" class="toast" role="status" aria-live="assertive"></div>
     <script src="/quiz-library.js" defer></script>
     <script src="/app.js" defer></script>
