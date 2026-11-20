@@ -118,17 +118,47 @@ LEGACY_CATEGORY_SLUGS: dict[str, str] = {
 
 
 def normalize_legacy_category(value: str) -> str:
-    """Normalize only separators/case; never rewrite the stored legacy value."""
-    return "-".join(value.strip().lower().replace("_", " ").split())
+    """Normalize labels and IDs for lookup without changing stored values."""
+    value = value.strip().lower()
+    if value.startswith("category:"):
+        return value
+    return "-".join(value.replace("_", " ").split())
+
+
+_CATEGORY_BY_ID = {item.id: item.slug for item in CATEGORIES}
+_CATEGORY_BY_SLUG = {normalize_legacy_category(item.slug): item.slug for item in CATEGORIES}
+_CATEGORY_ALIASES = {
+    "mathematics": "mathematics", "math": "mathematics", "maths": "mathematics",
+    "arithmetic": "mathematics-arithmetic", "algebra": "mathematics-algebra-geometry",
+    "geometry": "mathematics-algebra-geometry", "programming": "technology-programming",
+    "physics": "science-physics",
+}
+
+
+def resolve_category_slug(value: str | None, provenance: str | None = None) -> str | None:
+    """Resolve an official ID, slug, display label, or reviewed legacy alias."""
+    if not value or not value.strip():
+        return None
+    normalized = normalize_legacy_category(value)
+    if normalized in _CATEGORY_BY_ID:
+        return _CATEGORY_BY_ID[normalized]
+    if normalized in _CATEGORY_BY_SLUG:
+        return _CATEGORY_BY_SLUG[normalized]
+    if normalized == "general" and provenance == "built_in_reviewed":
+        return "general_knowledge"
+    alias = _CATEGORY_ALIASES.get(normalized)
+    if alias:
+        return alias
+    # Display names are authoritative and normalize to the same lookup form.
+    return next((item.slug for item in CATEGORIES
+                 if normalize_legacy_category(item.display_name) == normalized), None)
 
 
 def legacy_category_slug(value: str | None, provenance: str | None = None) -> str | None:
     if not value or not value.strip():
         return None
     normalized = normalize_legacy_category(value)
-    if normalized == "general":
-        return "general_knowledge" if provenance == "built_in_reviewed" else None
-    return LEGACY_CATEGORY_SLUGS.get(normalized)
+    return resolve_category_slug(value, provenance) or LEGACY_CATEGORY_SLUGS.get(normalized)
 
 
 def validate_category_definitions(categories: tuple[CategoryDefinition, ...] = CATEGORIES) -> None:

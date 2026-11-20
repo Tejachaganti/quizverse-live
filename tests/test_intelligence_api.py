@@ -40,7 +40,9 @@ def test_db(tmp_path: Path):
 
 @pytest.fixture
 def app(test_db: Database):
-    return create_app(database=test_db)
+    application = create_app(database=test_db)
+    application.state.generation_service.provider = None
+    return application
 
 
 @pytest.fixture

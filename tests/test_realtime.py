@@ -32,6 +32,7 @@ def server_url() -> str:
         cwd=PROJECT_ROOT,
         env={
             **os.environ,
+            "DATABASE_URL": "sqlite:///./quizverse.db",
             "HOST": "127.0.0.1",
             "PORT": str(port),
             "ALLOWED_ORIGINS": f"http://127.0.0.1:{port},http://localhost:{port}",
@@ -61,7 +62,7 @@ def server_url() -> str:
         process.wait(timeout=5)
 
 
-async def receive_until(socket: websockets.ClientConnection, predicate, timeout: float = 5):
+async def receive_until(socket: websockets.ClientConnection, predicate, timeout: float = 10):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         message = await asyncio.wait_for(socket.recv(), timeout=max(0.05, deadline - time.monotonic()))

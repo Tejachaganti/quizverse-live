@@ -20,7 +20,7 @@ from quizverse.persistence.db import Database
 from quizverse.persistence.models import Category, ExamCollection, ExamCollectionCategory, Quiz
 from sqlalchemy import select
 from quizverse.questions import Question
-from quizverse.taxonomy import legacy_category_slug
+from quizverse.taxonomy import legacy_category_slug, resolve_category_slug
 from quizverse.persistence.repositories import (
     QuestionRecord,
     QuizRecord,
@@ -199,18 +199,34 @@ class QuizAccessService:
         if owner_id is None:
             return None
         if ai_generated:
+            # AI drafts require stable FK-backed taxonomy associations. Seed the
+            # existing definitions additively before the atomic quiz write.
+            from quizverse.persistence.taxonomy_seeding import seed_taxonomy
+            seed_taxonomy(self._database)
+            question_records = tuple(questions)
+            slug = resolve_category_slug(quiz.category)
+            if slug is None and question_records:
+                resolved_questions = {resolve_category_slug(item.category) for item in question_records}
+                resolved_questions.discard(None)
+                if len(resolved_questions) == 1:
+                    slug = next(iter(resolved_questions))
+            if slug is None:
+                raise ValueError("AI-generated quizzes must use a supported category.")
+            category_id = f"category:{slug}"
             quiz = QuizRecord(
-                title=quiz.title, description=quiz.description, category=quiz.category,
+                title=quiz.title, description=quiz.description, category=slug,
                 difficulty=quiz.difficulty, visibility=quiz.visibility, status="draft",
                 default_time_limit_seconds=quiz.default_time_limit_seconds, provenance="ai_assisted",
+                category_id=category_id,
             )
             questions = (
                 QuestionRecord(
                     prompt=item.prompt, options=item.options, correct_option_index=item.correct_option_index,
                     explanation=item.explanation, category=item.category, difficulty=item.difficulty,
+                    category_id=f"category:{resolve_category_slug(item.category) or slug}",
                     time_limit_seconds=item.time_limit_seconds, provenance="ai_assisted",
                 )
-                for item in questions
+                for item in question_records
             )
         created = self._quizzes.create_with_questions(owner_id, quiz, questions)
         return _author_projection(created)

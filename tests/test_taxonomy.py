@@ -17,10 +17,21 @@ from quizverse.persistence.models import Category, QuestionTag, Quiz, QuizQuesti
 from quizverse.persistence.repositories import QuestionRecord, QuizRecord, QuizRepository
 from quizverse.persistence.taxonomy_seeding import seed_taxonomy
 from quizverse.realtime import create_app
-from quizverse.taxonomy import CATEGORIES, TAGS, CategoryDefinition, legacy_category_slug, validate_category_definitions
+from quizverse.taxonomy import CATEGORIES, TAGS, CategoryDefinition, legacy_category_slug, resolve_category_slug, validate_category_definitions
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASELINE_REVISION = "9c82d5f795b9"
+
+
+@pytest.mark.parametrize("value,slug", [
+    *((item.id, item.slug) for item in CATEGORIES),
+    *((item.display_name, item.slug) for item in CATEGORIES),
+    ("Mathematics", "mathematics"), ("Arithmetic", "mathematics-arithmetic"),
+    ("Algebra", "mathematics-algebra-geometry"), ("Programming", "technology-programming"),
+    ("Physics", "science-physics"), ("not-a-category", None),
+])
+def test_central_category_resolver_accepts_ids_labels_and_aliases(value, slug):
+    assert resolve_category_slug(value) == slug
 
 
 def migrate(database_url: str, revision: str = "head") -> None:

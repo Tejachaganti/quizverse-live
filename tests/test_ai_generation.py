@@ -8,8 +8,12 @@ from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
+from quizverse.persistence.authorization import QuizAccessService
+from quizverse.question_intelligence import SelectionFilters, select_questions
+from quizverse.taxonomy import CATEGORIES
 
 from quizverse.ai_generation import (
+    GeneratedQuestion,
     GeneratedQuestions,
     GenerationError,
     GenerationLimiter,
@@ -58,6 +62,7 @@ class MockProvider:
 
     async def generate(self, prompt, schema, *, max_output_tokens):
         self.calls += 1
+        self.prompts = getattr(self, "prompts", []) + [prompt]
         if self.error:
             raise self.error
         if self.response is not None:
@@ -85,6 +90,7 @@ def test_topic_generation_and_server_signed_ai_draft_save(ai_client):
     headers = {"Authorization": f"Bearer {owner}"}
     response = client.post("/api/ai/generations", headers=headers, json={
         "method": "topic", "subject": "Computer Science", "topic": "Operating Systems",
+        "category": "category:technology-computing-fundamentals",
         "objectives": "Understand scheduling", "question_count": 2, "difficulty": "medium",
     })
     assert response.status_code == 200
@@ -94,17 +100,28 @@ def test_topic_generation_and_server_signed_ai_draft_save(ai_client):
     assert service.provider.calls == 1
 
     payload = {
-        "title": "OS Basics", "category": "operating-systems", "difficulty": "medium",
+        "title": "OS Basics", "category": "technology-computing-fundamentals", "difficulty": "medium",
         "visibility": "public", "questions": [
             {**question, "time_limit_seconds": 15} for question in generated["questions"]
         ],
         "generation_ticket": generated["generation_ticket"],
     }
     saved = client.post("/api/quizzes", headers=headers, json=payload)
-    assert saved.status_code == 201
+    assert saved.status_code == 201, saved.text
+    assert all(question["category_id"] == "category:technology-computing-fundamentals" for question in saved.json()["questions"])
+    assert client.get("/api/quizzes", params={"category": "technology-computing-fundamentals"}).status_code == 200
     assert saved.json()["status"] == "draft"
     assert saved.json()["provenance"] == "ai_assisted"
     assert all(question["provenance"] == "ai_assisted" for question in saved.json()["questions"])
+
+    repeated = client.post("/api/ai/generations", headers=headers, json={
+        "method": "topic", "subject": "Computer Science", "topic": "Operating Systems",
+        "category": "category:technology-computing-fundamentals",
+        "objectives": "Understand scheduling", "question_count": 2, "difficulty": "medium",
+    })
+    assert repeated.status_code == 502
+    assert repeated.json()["error"]["code"] == "invalid_generated_output"
+    assert service.provider.calls == 3  # Initial generation plus one bounded retry.
 
     update = client.patch(f"/api/quizzes/{saved.json()['id']}", headers=headers, json={
         "expected_version": saved.json()["version"], "title": "Reviewed OS Basics",
@@ -122,10 +139,26 @@ def test_topic_generation_and_server_signed_ai_draft_save(ai_client):
     player = client.get(f"/api/quizzes/{saved.json()['id']}").json()
     assert "correct_option_index" not in player["questions"][0]
     assert "explanation" not in player["questions"][0]
+    access = QuizAccessService(service.database)
+    game_inventory = access.game_question_source(
+        quiz_ids=(saved.json()["id"],), capability=owner,
+    )
+    parent_by_id = {
+        item.id: f"category:{item.parent_slug}" if item.parent_slug else None
+        for item in CATEGORIES
+    }
+    selected = select_questions(game_inventory, SelectionFilters(
+        count=2, difficulty="medium", categories=frozenset({"category:technology-computing-fundamentals"}),
+        parent_by_id=parent_by_id,
+    ))
+    assert len(selected) == 2
+    assert all(item.category_id == "category:technology-computing-fundamentals" for item in selected)
+
 
 
 def test_generation_requires_owner_and_disabled_service_is_clear(ai_client):
     client = ai_client
+    client.app.state.generation_service.provider = None
     request = {"subject": "Science", "topic": "Space", "question_count": 1, "difficulty": "easy"}
     assert client.post("/api/ai/generations", json=request).status_code == 401
     owner = client.post("/api/quiz-owners").json()["capability"]
@@ -264,6 +297,18 @@ def test_generated_output_rejects_duplicate_questions_missing_extra_wrong_count_
             GeneratedQuestions.model_validate(invalid)
 
 
+def test_generated_question_normalizes_official_category_id_before_validation():
+    question = GeneratedQuestion.model_validate({
+        "prompt": "Which protocol resolves a host name to an IP address?",
+        "options": ["DNS", "SMTP", "SSH", "NTP"],
+        "correct_option_index": 0,
+        "explanation": "DNS resolves domain names to network addresses.",
+        "difficulty": "medium",
+        "category": "category:technology-computing-fundamentals",
+    })
+    assert question.category == "technology-computing-fundamentals"
+
+
 @pytest.mark.anyio
 async def test_wrong_count_retries_once_then_fails():
     provider = MockProvider(response=json.dumps({"questions": []}))
@@ -325,6 +370,33 @@ def test_provider_requires_explicit_free_tier_opt_in_and_allowlisted_model(monke
     assert isinstance(GenerationService().provider, GeminiProvider)
     monkeypatch.setenv("GEMINI_MODEL", "gemini-paid-model")
     assert GenerationService().provider is None
+
+
+def test_provider_stays_disabled_when_backend_api_key_is_missing(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("AI_GENERATION_ENABLED", "true")
+    monkeypatch.setenv("AI_FREE_TIER_ONLY", "true")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    assert GenerationService().provider is None
+def test_gemini_temperature_is_configurable_and_invalid_values_fall_back(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-secret")
+    monkeypatch.setenv("AI_GENERATION_ENABLED", "true")
+    monkeypatch.setenv("AI_FREE_TIER_ONLY", "true")
+    monkeypatch.setenv("GEMINI_TEMPERATURE", "1.1")
+    assert GenerationService().provider.temperature == 1.1
+    monkeypatch.setenv("GEMINI_TEMPERATURE", "99")
+    assert GenerationService().provider.temperature == 0.7
+
+
+@pytest.mark.anyio
+async def test_generation_prompt_contains_scope_difficulty_and_diversity_instructions():
+    provider = MockProvider()
+    service = GenerationService(provider)
+    request = GenerationRequest(subject="Physics", topic="Motion", category="Physics", question_count=1, difficulty="hard")
+    await service.generate(request, None, "owner")
+    prompt = provider.prompts[0]
+    assert "science-physics" in prompt and "Motion" in prompt and "hard" in prompt
+    assert "distinct sub-concepts" in prompt and "multi-step reasoning" in prompt
 
 
 def test_generation_api_enforces_five_requests_per_owner_per_hour(ai_client):

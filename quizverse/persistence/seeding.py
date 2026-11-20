@@ -13,7 +13,7 @@ from quizverse.persistence.models import BuiltinSeed, Quiz, QuizQuestion
 from quizverse.persistence.repositories import QuestionRecord, QuizRecord
 from quizverse.questions import QUESTIONS
 
-BUILTIN_BANK_ID = "builtin-general-knowledge-v1"
+BUILTIN_BANK_ID = "builtin-general-knowledge-v2"
 
 
 class BuiltinSeedConflict(RuntimeError):
@@ -80,8 +80,8 @@ def seed_builtin_bank(database: Database) -> bool:
 
         quiz_record = QuizRecord(
             id=BUILTIN_BANK_ID,
-            title="QuizVerse General Knowledge",
-            description="The reviewed built-in question bank.",
+            title="QuizVerse Curated Question Bank",
+            description="The reviewed built-in question bank, version 2.",
             category="general-knowledge",
             difficulty="medium",
             visibility="public",

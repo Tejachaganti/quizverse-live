@@ -365,6 +365,8 @@ def install_quiz_api(app: FastAPI, access: QuizAccessService, generation: Genera
     router = APIRouter(prefix="/api")
     owner_creation_limiter = OwnerCreationRateLimiter()
     generation_service = generation or GenerationService()
+    if generation_service.database is None:
+        generation_service.database = access._database
     app.state.generation_service = generation_service
 
     @app.middleware("http")

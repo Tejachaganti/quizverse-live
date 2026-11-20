@@ -877,7 +877,7 @@ def test_question_filters_freeze_common_sequence_and_keep_solo_preferences_priva
     assert "topic_preferences" not in host_started["match_filters"]
     assert host_started["question"] == guest_snapshot["question"]
     assert len(host_engine._rooms[code].questions) == 3
-    assert all(question.category_id in {"category:science", "category:science-space-astronomy"} for question in host_engine._rooms[code].questions)
+    assert all(question.category_id and question.category_id.startswith("category:science") for question in host_engine._rooms[code].questions)
 
     solo_engine = GameEngine()
     solo = asyncio.run(solo_engine.create_room("Solo", mode="solo_practice", selection={
@@ -891,7 +891,7 @@ def test_question_filters_freeze_common_sequence_and_keep_solo_preferences_priva
 
 def test_question_filter_inventory_error_happens_before_countdown():
     engine = GameEngine()
-    player = asyncio.run(engine.create_room("Solo", mode="solo_practice", selection={"difficulty": "hard"}))
+    player = asyncio.run(engine.create_room("Solo", mode="solo_practice", selection={"difficulty": "hard", "question_count": 17}))
     with pytest.raises(GameError, match="eligible questions are available") as error:
         asyncio.run(engine.start_game(player["state"]["code"], player["player_id"]))
     assert error.value.code == "insufficient_inventory"

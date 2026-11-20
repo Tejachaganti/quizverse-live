@@ -57,6 +57,7 @@ class QuizRecord:
     provenance: str = "user_authored"
     id: str | None = None
     version: int = 1
+    category_id: str | None = None
 
 
 def _plain_text(value: object, label: str, maximum: int, *, required: bool = True) -> str | None:
@@ -104,6 +105,7 @@ def validate_quiz_record(record: QuizRecord) -> QuizRecord:
         description=description, visibility=record.visibility, status=record.status,
         default_time_limit_seconds=record.default_time_limit_seconds, provenance=record.provenance,
         id=record.id, version=record.version,
+        category_id=record.category_id,
     )
 
 
@@ -177,6 +179,10 @@ def _insert_quiz(session, owner_id: str | None, quiz: QuizRecord, questions: Ite
         raise ValueError("Built-in reviewed quizzes cannot have an anonymous owner.")
     if quiz.provenance != "built_in_reviewed" and owner_id is None:
         raise ValueError("User-created quizzes require an anonymous owner.")
+    if quiz.category_id is not None:
+        category = session.get(Category, quiz.category_id)
+        if category is None or not category.is_active:
+            raise ValueError("Quiz category must reference an active taxonomy category.")
     quiz_id = quiz.id or secrets.token_hex(20)
     if owner_id is not None:
         owner = session.get(AnonymousOwner, owner_id)
@@ -187,6 +193,7 @@ def _insert_quiz(session, owner_id: str | None, quiz: QuizRecord, questions: Ite
         category=quiz.category, difficulty=quiz.difficulty, visibility=quiz.visibility,
         status=quiz.status, default_time_limit_seconds=quiz.default_time_limit_seconds,
         provenance=quiz.provenance, version=quiz.version,
+        category_id=quiz.category_id,
         published_at=datetime.now(UTC) if quiz.status == "published" else None,
         # Mark the collection loaded even for an empty draft. Repository callers
         # build immutable projections after commit, when lazy loading is unavailable.
@@ -365,6 +372,7 @@ class QuizRepository:
             quiz.title = validated_quiz.title
             quiz.description = validated_quiz.description
             quiz.category = validated_quiz.category
+            quiz.category_id = validated_quiz.category_id
             quiz.difficulty = validated_quiz.difficulty
             quiz.visibility = validated_quiz.visibility
             quiz.default_time_limit_seconds = validated_quiz.default_time_limit_seconds

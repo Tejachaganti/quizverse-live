@@ -479,7 +479,7 @@ def test_builtin_seed_is_stable_idempotent_and_preserves_provenance(migrated_dat
     assert first.owner_id is None
     assert first.provenance == "built_in_reviewed"
     assert first.status == "published"
-    assert len(first.questions) == 20
+    assert len(first.questions) == len(QUESTIONS)
     question_ids = [question.id for question in first.questions]
     assert len(question_ids) == len(set(question_ids))
     assert all(question.provenance == "built_in_reviewed" for question in first.questions)

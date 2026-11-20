@@ -22,6 +22,9 @@
     generationTicket: '',
     generationMethod: 'topic',
     aiAvailable: false,
+    taxonomyCategories: [],
+    taxonomyCategoriesLoading: false,
+    taxonomyCategoriesLoaded: false,
   };
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -424,6 +427,7 @@
     const values = new FormData(form);
     const method = String(values.get('method') || 'topic');
     const fields = {
+      category: String(values.get('category') || ''),
       subject: method === 'document' ? 'Document' : String(values.get('subject') || '').trim(),
       topic: method === 'document' ? (String(values.get('document_topic') || '').trim() || 'Uploaded document') : String(values.get('topic') || '').trim(),
       objectives: String(values.get('objectives') || '').trim(),
@@ -454,7 +458,7 @@
       const topic = fields.topic || String(values.get('topic') || 'Document quiz');
       const subject = fields.subject || 'Document';
       state.draft = {
-        ...newDraft(), title: `${topic} quiz`.slice(0, 100), category: categoryKey(topic).slice(0, 50) || 'general',
+        ...newDraft(), title: `${topic} quiz`.slice(0, 100), category: fields.category.replace(/^category:/, ''),
         difficulty: fields.difficulty, description: `Generated from ${subject}. Review every answer before publishing.`,
         questions: data.questions.map(questionDraft), generation_ticket: String(data.generation_ticket || ''),
       };
@@ -569,7 +573,7 @@
 
   function editorScreen() {
     const draft = state.draft || newDraft();
-    const generator = `<section class="ai-generator-panel" aria-labelledby="ai-generator-title"><div class="ai-generator-heading"><div><div class="section-kicker">AI ASSISTED</div><h2 id="ai-generator-title">Build a first draft</h2><p>Review each answer. Generated quizzes are never published automatically.</p></div><span class="ai-status" role="status">${state.aiAvailable ? 'READY' : state.aiStatusLoaded ? 'NOT CONFIGURED' : 'CHECKING'}</span></div>${!state.aiAvailable ? `<p class="field-hint">${state.aiStatusLoaded ? 'AI generation is not configured on this server. Ask the administrator to configure Gemini access.' : 'Checking AI availability…'}</p>` : `<form id="ai-generator-form"><label><span>Generate from</span><select class="field" name="method" id="ai-method"><option value="topic">A topic</option><option value="document">A document</option></select></label><div class="ai-topic-fields"><div class="metadata-grid"><label><span>Subject</span><input class="field" name="subject" maxlength="100" required placeholder="Computer Science"></label><label><span>Topic</span><input class="field" name="topic" maxlength="200" required placeholder="Operating systems"></label></div><label><span>Learning objectives (optional)</span><textarea class="field editor-textarea" name="objectives" maxlength="1000" placeholder="What should learners understand?"></textarea></label></div><div class="ai-document-fields" hidden><label><span>Document (PDF, DOCX, or TXT; up to 10 MB)</span><input class="field" type="file" name="document" accept=".pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label><p class="field-hint">Document content is sent to Gemini to generate questions. Google may use free-tier content to improve its products; do not upload sensitive material. Scanned PDFs are not supported.</p><label><span>Quiz topic</span><input class="field" name="document_topic" maxlength="200" placeholder="Topic from this document"></label></div><div class="ai-settings"><label><span>Questions</span><input class="field" type="number" name="question_count" min="1" max="20" value="5" required></label><label><span>Difficulty</span><select class="field" name="difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label><button class="btn btn-secondary" type="submit" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Generating…' : 'Generate questions'}</button></div></form>`}</section>`;
+    const generator = `<section class="ai-generator-panel" aria-labelledby="ai-generator-title"><div class="ai-generator-heading"><div><div class="section-kicker">AI ASSISTED</div><h2 id="ai-generator-title">Build a first draft</h2><p>Review each answer. Generated quizzes are never published automatically.</p></div><span class="ai-status" role="status">${state.aiAvailable ? 'READY' : state.aiStatusLoaded ? 'NOT CONFIGURED' : 'CHECKING'}</span></div>${!state.aiAvailable ? `<p class="field-hint">${state.aiStatusLoaded ? 'AI generation is not configured on this server. Ask the administrator to configure Gemini access.' : 'Checking AI availability…'}</p>` : `<form id="ai-generator-form"><label><span>Generate from</span><select class="field" name="method" id="ai-method"><option value="topic">A topic</option><option value="document">A document</option></select></label><label><span>Official category</span><select class="field" name="category" required ${state.taxonomyCategories.length ? '' : 'disabled'}><option value="">Choose an official category</option>${state.taxonomyCategories.map(category => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.displayName)}</option>`).join('')}</select>${state.taxonomyCategoriesLoaded && !state.taxonomyCategories.length ? '<span class="field-hint">Categories could not be loaded. Refresh and try again.</span>' : ''}</label><div class="ai-topic-fields"><div class="metadata-grid"><label><span>Subject</span><input class="field" name="subject" maxlength="100" required placeholder="Computer Science"></label><label><span>Topic</span><input class="field" name="topic" maxlength="200" required placeholder="Operating systems"></label></div><label><span>Learning objectives (optional)</span><textarea class="field editor-textarea" name="objectives" maxlength="1000" placeholder="What should learners understand?"></textarea></label></div><div class="ai-document-fields" hidden><label><span>Document (PDF, DOCX, or TXT; up to 10 MB)</span><input class="field" type="file" name="document" accept=".pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label><p class="field-hint">Document content is sent to Gemini to generate questions. Google may use free-tier content to improve its products; do not upload sensitive material. Scanned PDFs are not supported.</p><label><span>Quiz topic</span><input class="field" name="document_topic" maxlength="200" placeholder="Topic from this document"></label></div><div class="ai-settings"><label><span>Questions</span><input class="field" type="number" name="question_count" min="1" max="20" value="5" required></label><label><span>Difficulty</span><select class="field" name="difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></label><button class="btn btn-secondary" type="submit" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Generating…' : 'Generate questions'}</button></div></form>`}</section>`;
     return `<section class="creator-view"><div class="creator-toolbar"><button class="back-button" type="button" data-quiz-action="back-library">← Back to library</button><span class="quiz-status ${draft.status === 'published' ? 'published' : ''}">${draft.status === 'published' ? 'Published' : draft.id ? 'Draft' : 'Unsaved draft'}</span></div><div class="creator-heading"><div class="section-kicker">QUIZ CREATOR</div><h1>${draft.id ? 'Shape your quiz.' : 'Start with a question.'}</h1><p>Save a draft any time. Preview it like a player before publishing.</p></div>${generator}<form id="quiz-editor-form" novalidate><section class="editor-section"><h2>Quiz details</h2><div class="metadata-grid"><label><span>Title</span><input class="field" maxlength="100" required data-quiz-field="title" value="${escapeHtml(draft.title)}" placeholder="The great space race"></label><label><span>Category</span><input class="field" maxlength="50" required data-quiz-field="category" value="${escapeHtml(draft.category)}" placeholder="science"></label><label><span>Difficulty</span><select class="field" data-quiz-field="difficulty">${['easy', 'medium', 'hard'].map(value => `<option value="${value}" ${draft.difficulty === value ? 'selected' : ''}>${value[0].toUpperCase()}${value.slice(1)}</option>`).join('')}</select></label><label><span>Default answer time</span><input class="field" type="number" min="5" max="120" required data-quiz-field="default_time_limit_seconds" value="${escapeHtml(draft.default_time_limit_seconds)}"></label><label><span>Visibility</span><select class="field" data-quiz-field="visibility"><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option></select></label><label class="description-field"><span>Description</span><textarea class="field editor-textarea" maxlength="500" data-quiz-field="description" placeholder="What makes this quiz fun?">${escapeHtml(draft.description)}</textarea></label></div><p class="field-hint">Public quizzes appear in Explore. Private quizzes stay in your library unless you create a share grant through the API.</p></section><section class="editor-section question-section"><div class="section-title-row"><div><h2>Questions <span class="question-count">${draft.questions.length}</span></h2><p>Four distinct choices per question. Reorder with the arrow buttons.</p></div><button class="btn btn-secondary" type="button" data-quiz-action="add-question" ${draft.questions.length >= 200 ? 'disabled' : ''}>＋ Add question</button></div>${draft.questions.length ? draft.questions.map((question, index) => renderQuestion(question, index)).join('') : '<div class="empty-question"><h3>Your first question starts here</h3><p>Add a prompt and four answer options. Drafts can be saved before they are complete.</p></div>'}</section>${state.notice ? `<p class="library-message" role="alert">${escapeHtml(state.notice)}</p>` : ''}<div class="editor-actions"><button class="btn btn-quiet" type="button" data-quiz-action="preview-editor">Preview</button><button class="btn btn-primary" type="button" data-quiz-action="save-quiz" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Saving…' : 'Save draft'}</button>${draft.id ? `<button class="btn btn-secondary" type="button" data-quiz-action="${draft.status === 'published' ? 'unpublish' : 'publish'}" ${state.loading ? 'disabled' : ''}>${draft.status === 'published' ? 'Unpublish' : 'Publish quiz'}</button><button class="btn btn-danger" type="button" data-quiz-action="delete-quiz">Delete quiz</button>` : ''}</div></form></section>`;
   }
 
@@ -796,6 +800,29 @@
     });
   }
 
+  function flattenCategoryTree(nodes) {
+    return (Array.isArray(nodes) ? nodes : []).flatMap(node => [
+      { id: node.id, slug: node.slug, displayName: node.display_name },
+      ...flattenCategoryTree(node.children),
+    ]);
+  }
+
+  function loadTaxonomyCategories() {
+    if (state.taxonomyCategoriesLoaded || state.taxonomyCategoriesLoading) return;
+    state.taxonomyCategoriesLoading = true;
+    request('/api/categories').then(({ response, data }) => {
+      state.taxonomyCategoriesLoading = false;
+      state.taxonomyCategoriesLoaded = true;
+      if (response.ok && Array.isArray(data)) state.taxonomyCategories = flattenCategoryTree(data);
+      render();
+    }).catch(() => {
+      state.taxonomyCategoriesLoading = false;
+      state.taxonomyCategoriesLoaded = true;
+      state.taxonomyCategories = [];
+      render();
+    });
+  }
+
   function mount(root, notify) {
     // Main navigation enters the library landing page; the current editor draft
     // remains persisted in tab storage and can be reopened from the owner's list.
@@ -806,6 +833,7 @@
       setupHandlers(root);
     }
     render();
+    loadTaxonomyCategories();
     if (!state.aiStatusLoaded) {
       request('/api/ai/status').then(({ response, data }) => {
         state.aiAvailable = response.ok && data?.enabled === true;

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from email import policy
 from email.parser import BytesParser
 from typing import Annotated, Any, Protocol
+from quizverse.taxonomy import resolve_category_slug
 from xml.etree import ElementTree
 
 from fastapi import Request, UploadFile
@@ -53,6 +54,7 @@ class GenerationRequest(StrictModel):
     objectives: str | None = Field(default=None, max_length=1000)
     question_count: int = Field(ge=1, le=MAX_GENERATION_QUESTIONS)
     difficulty: str
+    category: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("difficulty")
     @classmethod
@@ -69,6 +71,15 @@ class GeneratedQuestion(StrictModel):
     explanation: str = Field(min_length=1, max_length=1000)
     difficulty: str
     category: str = Field(min_length=1, max_length=50)
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def normalize_official_category(cls, value: object) -> object:
+        if isinstance(value, str):
+            slug = resolve_category_slug(value)
+            if slug is not None:
+                return slug
+        return value
 
     @field_validator("difficulty")
     @classmethod
@@ -105,10 +116,11 @@ class AIProvider(Protocol):
 class GeminiProvider:
     """Google Gemini REST adapter. No SDK or provider calls when unconfigured."""
 
-    def __init__(self, api_key: str, model: str, timeout_seconds: float = 45.0) -> None:
+    def __init__(self, api_key: str, model: str, timeout_seconds: float = 45.0, temperature: float = 0.7) -> None:
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.temperature = temperature
 
     async def generate(self, prompt: str, schema: dict[str, Any], *, max_output_tokens: int) -> str:
         return await asyncio.to_thread(self._generate_sync, prompt, schema, max_output_tokens)
@@ -125,7 +137,7 @@ class GeminiProvider:
                 "responseMimeType": "application/json",
                 "responseSchema": schema,
                 "maxOutputTokens": max_output_tokens,
-                "temperature": 0.3,
+                "temperature": self.temperature,
             },
         }).encode("utf-8")
         request = urllib.request.Request(
@@ -198,18 +210,27 @@ def _canonical(value: str) -> str:
 
 
 class GenerationService:
-    def __init__(self, provider: AIProvider | None = None) -> None:
+    def __init__(self, provider: AIProvider | None = None, *, database=None, duplicate_detector=None) -> None:
         key = os.getenv("GEMINI_API_KEY", "").strip()
         enabled = os.getenv("AI_GENERATION_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
         free_tier_only = os.getenv("AI_FREE_TIER_ONLY", "false").strip().lower() in {"1", "true", "yes"}
         model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        raw_temperature = os.getenv("GEMINI_TEMPERATURE", "0.7")
+        try:
+            temperature = float(raw_temperature)
+            if not 0.0 <= temperature <= 2.0:
+                raise ValueError
+        except (TypeError, ValueError):
+            temperature = 0.7
         self.provider = provider or (
-            GeminiProvider(key, model)
+            GeminiProvider(key, model, temperature=temperature)
             if enabled and free_tier_only and key and model in FREE_TIER_MODELS
             else None
         )
         self.limiter = GenerationLimiter()
         self._ticket_key = secrets.token_bytes(32)
+        self.database = database
+        self.duplicate_detector = duplicate_detector
 
     @property
     def enabled(self) -> bool:
@@ -239,12 +260,19 @@ class GenerationService:
         owner_key = hashlib.sha256(owner_token.encode()).hexdigest()
         if not self.limiter.allow(owner_key):
             raise GenerationError(429, "generation_rate_limited", "You have reached the generation limit. Try again later.")
+        category_slug = resolve_category_slug(request.category or request.subject)
+        if request.category and category_slug is None:
+            raise GenerationError(422, "unsupported_category", "Choose a supported Quizverse category.")
+        resolved_category = f"category:{category_slug}" if category_slug else ""
         if source_text is not None:
             details = json.dumps({"document_source_untrusted": source_text}, ensure_ascii=False)
         else:
-            details = json.dumps({"subject": request.subject, "topic": request.topic, "learning_objectives": request.objectives}, ensure_ascii=False)
+            details = json.dumps({"category_id": resolved_category, "category": category_slug, "subject": request.subject, "topic": request.topic, "learning_objectives": request.objectives}, ensure_ascii=False)
+        variation = secrets.token_hex(4)
+        difficulty_guidance = {"easy": "fundamental recall and basic understanding", "medium": "application and moderate reasoning", "hard": "multi-step reasoning and deeper conceptual understanding"}[request.difficulty]
         prompt = (
-            f"Requested count: {request.question_count}\nDifficulty: {request.difficulty}\n{details}"
+            f"Request variation: {variation}\nRequested count: {request.question_count}\nCategory: {resolved_category or 'infer from subject'}\nSubject: {request.subject}\nTopic: {request.topic}\nDifficulty: {request.difficulty} ({difficulty_guidance})\n"
+            "Create diverse questions covering distinct sub-concepts and problem-solving scenarios. Avoid textbook cliches and superficial rewordings; do not repeat an angle.\n" + details
         )
         last_error: GenerationError | None = None
         for attempt in range(2):
@@ -261,7 +289,21 @@ class GenerationService:
                 prompts = [_canonical(item.prompt) for item in parsed.questions]
                 if len(set(prompts)) != len(prompts):
                     raise ValueError("The response contained duplicate questions.")
-                return {"questions": [item.model_dump() for item in parsed.questions], "generation_ticket": self.issue_ticket(owner_token)}
+                candidates = self._historical_candidates(owner_token, category_slug)
+                for item in parsed.questions:
+                    from quizverse.intelligence.duplicate_detection import DuplicateDetector
+                    detector = self.duplicate_detector or DuplicateDetector()
+                    result = detector.check_duplicate(item.prompt, candidates)
+                    duplicate = result.duplicate_status in {"exact_duplicate", "normalized_duplicate"} or (
+                        result.duplicate_status == "near_duplicate" and len(_canonical(item.prompt).split()) >= 5
+                    )
+                    if duplicate:
+                        raise ValueError("The response repeated previously stored question content.")
+                questions = [
+                    {**item.model_dump(), "category": category_slug or item.category}
+                    for item in parsed.questions
+                ]
+                return {"questions": questions, "generation_ticket": self.issue_ticket(owner_token)}
             except GenerationError as error:
                 last_error = error
                 if error.status in {429, 504, 422} or attempt == 1:
@@ -274,6 +316,24 @@ class GenerationService:
                     raise last_error
         assert last_error is not None
         raise last_error
+
+    def _historical_candidates(self, owner_token: str, category_slug: str | None) -> list[DuplicateCandidate]:
+        if self.database is None:
+            return []
+        from sqlalchemy import select
+        from quizverse.persistence.models import CapabilityGrant, Quiz, QuizQuestion
+        from quizverse.intelligence.duplicate_detection import DuplicateCandidate
+        category_id = f"category:{category_slug}" if category_slug else None
+        token_hash = hashlib.sha256(owner_token.encode("ascii", errors="strict")).hexdigest()
+        statement = (select(QuizQuestion.id, QuizQuestion.prompt).join(Quiz, Quiz.id == QuizQuestion.quiz_id)
+                     .join(CapabilityGrant, CapabilityGrant.owner_id == Quiz.owner_id)
+                     .where(CapabilityGrant.token_hash == token_hash, CapabilityGrant.scope == "owner", CapabilityGrant.revoked_at.is_(None)))
+        if category_id:
+            statement = statement.where(QuizQuestion.category_id == category_id)
+        statement = statement.order_by(QuizQuestion.created_at.desc()).limit(500)
+        with self.database.session() as session:
+            rows = session.execute(statement).all()
+        return [DuplicateCandidate(str(row.id), row.prompt) for row in rows]
 
 
 def extract_upload(upload: UploadFile, raw: bytes) -> str:
